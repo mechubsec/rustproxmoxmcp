@@ -4,7 +4,7 @@
 #
 # Builder version is taken from rust-toolchain.toml (currently 1.98.0). The two
 # must stay in sync.
-FROM rust:1.98-slim-bookworm@sha256:ff521445a372125ed4f76e1453a1f8098f2d05332d1601d30db1c1f62757e730 AS builder
+FROM rust:1.99-slim-bookworm@sha256:452176c0cefca88c0b3184ce85a4eb03e3d4fa05d2afb5366abcba853221019e AS builder
 WORKDIR /src
 
 COPY . .
