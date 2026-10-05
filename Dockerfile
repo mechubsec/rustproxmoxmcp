@@ -2,7 +2,7 @@
 # linux/amd64 manifests pinned on 2026-08-24. The published image is currently
 # amd64-only; update both digests deliberately when refreshing either base.
 #
-# Builder version is taken from rust-toolchain.toml (currently 1.98.0). The two
+# Builder version is taken from rust-toolchain.toml (currently 1.99.0). The two
 # must stay in sync.
 FROM rust:1.99-slim-bookworm@sha256:452176c0cefca88c0b3184ce85a4eb03e3d4fa05d2afb5366abcba853221019e AS builder
 WORKDIR /src
