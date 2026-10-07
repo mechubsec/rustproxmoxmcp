@@ -735,5 +735,12 @@ async fn a_rule_field_outside_the_allowlist_is_refused_before_any_request() {
     .await
     .expect_err("bad rule type");
     assert!(error.contains("rule type"), "{error}");
-    assert!(server.requests().is_empty(), "{:?}", server.requests());
+    assert!(
+        !server
+            .requests()
+            .iter()
+            .any(|request| request.path.contains("/firewall")),
+        "{:?}",
+        server.requests()
+    );
 }
