@@ -4,10 +4,11 @@ service    = "rust-proxmoxmcp"
 config_dir = "/etc/proxmoxmcp"
 tokens     = "/var/lib/proxmoxmcp/tokens.json"
 
-# No supported skip-build path yet, so no honest BUILD-INFO is possible.
-# R3 warns until both change together. See mecmcp's spec, "Provenance ordering".
+# package-lxc.sh accepts a prebuilt binary (PROXMOXMCP_PACKAGE_SKIP_BUILD)
+# but does not emit BUILD-INFO, so R3 stays a warning. See mecmcp's spec,
+# "Provenance ordering".
 build_info     = false
-skip_build_env = false
+skip_build_env = "PROXMOXMCP_PACKAGE_SKIP_BUILD"
 
 units = ["packaging/systemd/rust-proxmoxmcp.service"]
 

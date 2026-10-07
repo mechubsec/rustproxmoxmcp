@@ -550,7 +550,7 @@ The command preserves the image's `ENTRYPOINT` paths and replaces its HTTP
 [Docker how-to](docs/HOW-TO-SETUP-DOCKER.md) for the two-person and lab-mode
 streamable-HTTP setup.
 
-`packaging/lxc/install.sh` is a POSIX installer targeting Debian 13 LXC. The installer:
+`scripts/package-lxc.sh` builds the Debian 13 LXC tarball. `packaging/lxc/install.sh` is the POSIX installer for that tarball. The installer:
 - Creates the `proxmoxmcp` system user
 - Installs the binary to `/usr/local/bin/rust-proxmoxmcp`
 - Installs example config files to `/etc/proxmoxmcp` (mode 0600, owned by `proxmoxmcp`) **only if absent**
