@@ -1,6 +1,7 @@
 //! The MCP tool surface for release 0.1: reads only.
 
 mod change_set;
+mod firewall_change_set;
 mod ha_change_set;
 mod restore_change_set;
 
@@ -41,9 +42,21 @@ use std::sync::Arc;
 /// meaningful for everything else.
 #[cfg_attr(not(test), allow(dead_code))]
 const AUTHORIZATION_ONLY_TOOLS: &[&str] = &[
+    "create_firewall_alias",
+    "create_firewall_group",
+    "create_firewall_group_rule",
+    "create_firewall_ipset",
+    "create_firewall_ipset_entry",
+    "create_firewall_rule",
     "create_ha_rule",
     "delete_backup",
     "delete_container",
+    "delete_firewall_alias",
+    "delete_firewall_group",
+    "delete_firewall_group_rule",
+    "delete_firewall_ipset",
+    "delete_firewall_ipset_entry",
+    "delete_firewall_rule",
     "delete_ha_rule",
     "delete_iso",
     "delete_snapshot",
@@ -53,6 +66,11 @@ const AUTHORIZATION_ONLY_TOOLS: &[&str] = &[
     "restore_backup",
     "restore_backup_new_vmid",
     "rollback_snapshot",
+    "update_firewall_alias",
+    "update_firewall_group_rule",
+    "update_firewall_ipset_entry",
+    "update_firewall_options",
+    "update_firewall_rule",
     "update_ha_rule",
     "update_vm_config",
 ];
@@ -720,19 +738,33 @@ fn paginate(
 /// Every tool registered by this release. Kept sorted; asserted against the
 /// catalog by a test so the two cannot drift.
 pub const KNOWN_TOOLS: &[&str] = &[
+    "apply_firewall_change",
     "apply_ha_rule_change",
     "apply_proxmox_change_set",
     "apply_restore_new_vmid",
+    "approve_firewall_change",
     "approve_ha_rule_change",
     "approve_proxmox_change_set",
     "clone_vm",
     "create_backup",
     "create_container",
+    "create_firewall_alias",
+    "create_firewall_group",
+    "create_firewall_group_rule",
+    "create_firewall_ipset",
+    "create_firewall_ipset_entry",
+    "create_firewall_rule",
     "create_ha_rule",
     "create_snapshot",
     "create_vm",
     "delete_backup",
     "delete_container",
+    "delete_firewall_alias",
+    "delete_firewall_group",
+    "delete_firewall_group_rule",
+    "delete_firewall_ipset",
+    "delete_firewall_ipset_entry",
+    "delete_firewall_rule",
     "delete_ha_rule",
     "delete_iso",
     "delete_snapshot",
@@ -744,6 +776,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_container_config",
     "get_container_ip",
     "get_containers",
+    "get_firewall_change_set",
     "get_firewall_ipset_entries",
     "get_firewall_security_group_rules",
     "get_guest_firewall_ipset_entries",
@@ -774,6 +807,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "list_templates",
     "migrate_container",
     "migrate_vm",
+    "plan_firewall_change",
     "plan_ha_rule_change",
     "plan_proxmox_destroy",
     "plan_restore_new_vmid",
@@ -790,6 +824,11 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "stop_task",
     "stop_vm",
     "update_container_resources",
+    "update_firewall_alias",
+    "update_firewall_group_rule",
+    "update_firewall_ipset_entry",
+    "update_firewall_options",
+    "update_firewall_rule",
     "update_ha_rule",
     "update_vm_config",
 ];
@@ -1916,7 +1955,7 @@ const FREE_TEXT_KEYS: &[&str] = &[
 ///
 /// `sshkeys` is deliberately excluded: it carries a guest's authorized
 /// public keys, which are not secret.
-fn redact_free_text_fields(value: &mut serde_json::Value) {
+pub(crate) fn redact_free_text_fields(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, field) in map.iter_mut() {
@@ -7444,6 +7483,843 @@ impl ProxmoxServer {
             }
         }
     }
+
+    #[tool(
+        name = "plan_firewall_change",
+        description = "Plan a firewall change. The firewall is not changed until the change set is approved and applied."
+    )]
+    async fn plan_firewall_change(
+        &self,
+        Parameters(args): Parameters<firewall_change_set::PlanFirewallArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        use change_set::ChangeSetResponse;
+
+        let caller = Self::caller(&context);
+        let prepared = match self.prepare_firewall_plan(&args, caller.as_ref()).await {
+            Ok(prepared) => prepared,
+            Err(error) => return *error,
+        };
+        match self.record_firewall_plan(prepared).await {
+            Ok(response) => tool_result(
+                Ok::<ChangeSetResponse, String>(response),
+                ResultFormat::PrettyJson,
+                RESULT_LIMITS,
+                OutputRedaction::Apply,
+            ),
+            Err(error) => *error,
+        }
+    }
+
+    #[tool(
+        name = "get_firewall_change_set",
+        description = "Read the state of a firewall change set, including the preview stored at plan time."
+    )]
+    async fn get_firewall_change_set(
+        &self,
+        Parameters(args): Parameters<firewall_change_set::FirewallChangeSetArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        use change_set::ChangeSetResponse;
+
+        let caller = Self::caller(&context);
+        if let Err(error) = authorize_call(
+            caller.as_ref(),
+            "get_firewall_change_set",
+            Some(&args.cluster),
+            WRITE_TOOLS,
+        ) {
+            return authz_tool_error(error);
+        }
+        let device = match firewall_change_set::device_for_lookup(&args) {
+            Ok(device) => device,
+            Err(error) => return tool_error(error),
+        };
+        if let Err(error) = self.authorize_firewall_read(&args, caller.as_ref()).await {
+            return *error;
+        }
+        let record = match self
+            .coordinator
+            .change_set(&args.change_set_id, &device)
+            .await
+        {
+            Ok(record) => record,
+            Err(error) => return tool_error(format!("get: {error}")),
+        };
+        let preview_text = record
+            .preview
+            .as_ref()
+            .map(|preview| preview.artifact.clone())
+            .unwrap_or_else(|| "(no preview)".to_owned());
+        let response = ChangeSetResponse {
+            change_set_id: record.id,
+            state: format!("{:?}", record.state),
+            expected_fingerprint: record.expected_candidate_fingerprint,
+            preview: preview_text,
+            expected_digest: Some(record.digest),
+        };
+        tool_result(
+            Ok::<_, String>(response),
+            ResultFormat::PrettyJson,
+            RESULT_LIMITS,
+            OutputRedaction::Apply,
+        )
+    }
+
+    #[tool(
+        name = "approve_firewall_change",
+        description = "Approve a planned firewall change set as a second principal."
+    )]
+    async fn approve_firewall_change(
+        &self,
+        Parameters(args): Parameters<firewall_change_set::FirewallChangeSetArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        use change_set::ChangeSetResponse;
+        use firewall_change_set::{action_matches_lookup, tool_for_firewall_op};
+
+        let caller = Self::caller(&context);
+        if let Err(error) = authorize_call(
+            caller.as_ref(),
+            "approve_firewall_change",
+            Some(&args.cluster),
+            WRITE_TOOLS,
+        ) {
+            return authz_tool_error(error);
+        }
+        let device = match firewall_change_set::device_for_lookup(&args) {
+            Ok(device) => device,
+            Err(error) => return tool_error(error),
+        };
+        if let Err(error) = require_firewall_destructive_tier(caller.as_ref()) {
+            return *error;
+        }
+        let record = match self
+            .coordinator
+            .change_set(&args.change_set_id, &device)
+            .await
+        {
+            Ok(record) => record,
+            Err(error) => return tool_error(format!("get: {error}")),
+        };
+        let Some(preview) = record.preview.as_ref() else {
+            return tool_error(
+                "approval refused: this change set has no stored preview, so there is \
+                 nothing to review. Plan the operation again.",
+            );
+        };
+        let action = match firewall_action_from_record(&record) {
+            Ok(action) => action,
+            Err(error) => return tool_error(error),
+        };
+        if !action_matches_lookup(&action, &args) {
+            return tool_error("the change set does not address this firewall object".to_owned());
+        }
+        if let Err(error) = self
+            .authorize_firewall_mutation(
+                &args,
+                &action,
+                caller.as_ref(),
+                Some(record.owner.as_str()),
+            )
+            .await
+        {
+            return *error;
+        }
+        let Some(op_tool) = tool_for_firewall_op(&action.object, &action.op) else {
+            return tool_error(format!(
+                "the change set names an unknown firewall operation '{}'",
+                action.op
+            ));
+        };
+        if let Err(error) =
+            authorize_call(caller.as_ref(), op_tool, Some(&args.cluster), WRITE_TOOLS)
+        {
+            return authz_tool_error(error);
+        }
+        let approver = caller
+            .as_ref()
+            .map(|ctx| ctx.token_name.clone())
+            .unwrap_or_else(|| "stdio".to_owned());
+        let approver_actor_type = change_set::actor_type(caller.as_ref());
+        let output = match self
+            .coordinator
+            .approve_change_set(
+                args.change_set_id.clone(),
+                device,
+                approver,
+                record.digest.clone(),
+                approver_actor_type,
+            )
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => {
+                let msg = error.to_string();
+                if msg.contains("owner cannot approve their own") {
+                    return tool_error(
+                        "self-approval refused: the planner cannot approve their own change set",
+                    );
+                }
+                return tool_error(format!("approve: {error}"));
+            }
+        };
+        let response = ChangeSetResponse {
+            change_set_id: output.change_set_id,
+            state: format!("{:?}", output.state),
+            expected_fingerprint: record.expected_candidate_fingerprint,
+            preview: preview.artifact.clone(),
+            expected_digest: Some(output.digest),
+        };
+        tool_result(
+            Ok::<_, String>(response),
+            ResultFormat::PrettyJson,
+            RESULT_LIMITS,
+            OutputRedaction::Apply,
+        )
+    }
+
+    #[tool(
+        name = "apply_firewall_change",
+        description = "Apply an approved firewall change set. Refuses a change set that is not approved, or whose firewall object has changed since the plan."
+    )]
+    async fn apply_firewall_change(
+        &self,
+        Parameters(args): Parameters<firewall_change_set::FirewallChangeSetArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        let caller = Self::caller(&context);
+        let ready = match self.prepare_firewall_apply(&args, caller.as_ref()).await {
+            Ok(ready) => ready,
+            Err(error) => return *error,
+        };
+        self.finish_firewall_apply(ready).await
+    }
+}
+
+struct GuestFirewallGate {
+    node: String,
+    kind: String,
+    protected: bool,
+    summary: String,
+    override_: rust_proxmoxmcp_core::protect::Override,
+}
+
+struct FirewallApplyReady {
+    cluster: String,
+    record: mecmcp_changeset::ChangeSetRecord,
+    action: rust_proxmoxmcp_core::firewall::FirewallAction,
+    live_node: Option<String>,
+    live_kind: Option<String>,
+    request_id: String,
+    principal: String,
+}
+
+fn require_firewall_destructive_tier(
+    caller: Option<&CallerCtx<ProxmoxGrant>>,
+) -> Result<(), Box<CallToolResult>> {
+    let grant = resolve_grant(caller)?;
+    if grant.allows_action(rust_proxmoxmcp_core::ProxmoxAction::Destructive) {
+        Ok(())
+    } else {
+        Err(Box::new(tool_error(
+            "changing a firewall requires the 'destructive' action tier, which this caller \
+             does not carry",
+        )))
+    }
+}
+
+fn require_shared_firewall_scope(grant: &ProxmoxGrant) -> Result<(), Box<CallToolResult>> {
+    if grant.is_unrestricted_guest_scope() {
+        Ok(())
+    } else {
+        Err(Box::new(tool_error(
+            "a cluster or node firewall change is not scoped to one guest, so it requires a \
+             caller whose guest scope is '*'. This caller is narrowed to specific guests and \
+             cannot be checked against it.",
+        )))
+    }
+}
+
+fn firewall_action_from_record(
+    record: &mecmcp_changeset::ChangeSetRecord,
+) -> Result<rust_proxmoxmcp_core::firewall::FirewallAction, String> {
+    let value = record
+        .actions
+        .first()
+        .ok_or_else(|| "the change set records no action".to_owned())?;
+    serde_json::from_value(value.clone()).map_err(|error| {
+        format!("the change set's action could not be read ({error}); it cannot be applied")
+    })
+}
+
+impl ProxmoxServer {
+    async fn gate_guest_firewall(
+        &self,
+        client: &rust_proxmoxmcp_core::client::ProxmoxClient,
+        cluster: &str,
+        vmid: u32,
+        caller: Option<&CallerCtx<ProxmoxGrant>>,
+        waiver_op: &str,
+        waiver_principal: Option<&str>,
+    ) -> Result<GuestFirewallGate, Box<CallToolResult>> {
+        use rust_proxmoxmcp_core::protect::{
+            DestructiveAttempt, Override, destructive_allowed, protection_of,
+        };
+
+        self.index.invalidate_cluster(cluster);
+        let grant = resolve_grant(caller)?;
+        let (resolved, resolution_failed) = match self.index.resolve(client, cluster, vmid).await {
+            Ok(guest) => (Some(guest), false),
+            Err(_) => (None, true),
+        };
+        let protection = protection_of(client.cluster(), resolved.as_ref(), resolution_failed);
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_secs();
+        let override_ = destructive_allowed(
+            &protection,
+            &self.waivers,
+            cluster,
+            vmid,
+            now_unix,
+            self.lab_mode,
+            DestructiveAttempt {
+                op: waiver_op,
+                principal: waiver_principal,
+            },
+        );
+        let override_applies = !matches!(override_, Override::None);
+        let authorized = match self
+            .index
+            .authorize(
+                client,
+                cluster,
+                vmid,
+                &grant,
+                Intent::destructive(override_applies),
+            )
+            .await
+        {
+            Ok(authorized) => authorized,
+            Err(error) => return Err(Box::new(tool_error(error))),
+        };
+        let guest = authorized.guest();
+        Ok(GuestFirewallGate {
+            node: guest.node.clone(),
+            kind: guest.r#type.path_segment().to_owned(),
+            protected: protection.is_protected(),
+            summary: protection.summary(),
+            override_,
+        })
+    }
+
+    async fn authorize_firewall_read(
+        &self,
+        args: &firewall_change_set::FirewallChangeSetArgs,
+        caller: Option<&CallerCtx<ProxmoxGrant>>,
+    ) -> Result<(), Box<CallToolResult>> {
+        let grant = resolve_grant(caller)?;
+        if args.scope != "guest" {
+            return require_shared_firewall_scope(&grant);
+        }
+        let Some(vmid) = args.vmid else {
+            return Err(Box::new(tool_error("guest firewall change requires vmid")));
+        };
+        let client = self.client_for(&args.cluster)?;
+        self.index.invalidate_cluster(&args.cluster);
+        match self
+            .index
+            .authorize(client, &args.cluster, vmid, &grant, Intent::read())
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) => Err(Box::new(tool_error(error))),
+        }
+    }
+
+    async fn authorize_firewall_mutation(
+        &self,
+        args: &firewall_change_set::FirewallChangeSetArgs,
+        action: &rust_proxmoxmcp_core::firewall::FirewallAction,
+        caller: Option<&CallerCtx<ProxmoxGrant>>,
+        waiver_principal: Option<&str>,
+    ) -> Result<(), Box<CallToolResult>> {
+        let grant = resolve_grant(caller)?;
+        if action.scope != "guest" {
+            return require_shared_firewall_scope(&grant);
+        }
+        let Some(vmid) = action.vmid else {
+            return Err(Box::new(tool_error("guest firewall change has no vmid")));
+        };
+        let client = self.client_for(&args.cluster)?;
+        let waiver_op = firewall_change_set::firewall_waiver_op(action);
+        self.gate_guest_firewall(
+            client,
+            &args.cluster,
+            vmid,
+            caller,
+            &waiver_op,
+            waiver_principal,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn prepare_firewall_plan(
+        &self,
+        args: &firewall_change_set::PlanFirewallArgs,
+        caller: Option<&CallerCtx<ProxmoxGrant>>,
+    ) -> Result<firewall_change_set::PreparedFirewallPlan, Box<CallToolResult>> {
+        use firewall_change_set::{
+            PreparedFirewallPlan, build_firewall_action, existence_error, fingerprint_firewall,
+            firewall_device, firewall_protection_lines, firewall_waiver_op,
+            render_firewall_preview, tool_for_firewall_op,
+        };
+        use rust_proxmoxmcp_core::firewall::{LiveFirewall, observe};
+        use rust_proxmoxmcp_core::protect::Override;
+
+        if let Err(error) = authorize_call(
+            caller,
+            "plan_firewall_change",
+            Some(&args.cluster),
+            WRITE_TOOLS,
+        ) {
+            return Err(Box::new(authz_tool_error(error)));
+        }
+        let mut action = match build_firewall_action(args) {
+            Ok(action) => action,
+            Err(error) => return Err(Box::new(tool_error(error))),
+        };
+        let Some(op_tool) = tool_for_firewall_op(&action.object, &action.op) else {
+            return Err(Box::new(tool_error(format!(
+                "unknown firewall operation '{}'",
+                action.op
+            ))));
+        };
+        if let Err(error) = authorize_call(caller, op_tool, Some(&args.cluster), WRITE_TOOLS) {
+            return Err(Box::new(authz_tool_error(error)));
+        }
+        require_firewall_destructive_tier(caller)?;
+        let grant = resolve_grant(caller)?;
+        if action.scope != "guest" {
+            require_shared_firewall_scope(&grant)?;
+        }
+        let client = self.client_for(&args.cluster)?;
+        let (live_node, live_kind, protected, summary, override_) = if action.scope == "guest" {
+            let vmid = action
+                .vmid
+                .ok_or_else(|| Box::new(tool_error("guest firewall change has no vmid")))?;
+            let waiver_op = firewall_waiver_op(&action);
+            let principal = caller.map(|ctx| ctx.token_name.as_str());
+            let gate = self
+                .gate_guest_firewall(client, &args.cluster, vmid, caller, &waiver_op, principal)
+                .await?;
+            action.guest_type = Some(gate.kind.clone());
+            (
+                Some(gate.node),
+                Some(gate.kind),
+                gate.protected,
+                gate.summary,
+                gate.override_,
+            )
+        } else {
+            (None, None, false, String::new(), Override::None)
+        };
+        let observed = match observe(
+            client,
+            &action,
+            LiveFirewall {
+                node: live_node.as_deref(),
+                guest_kind: live_kind.as_deref(),
+            },
+        )
+        .await
+        {
+            Ok(observed) => observed,
+            Err(error) => {
+                return Err(Box::new(tool_error(format!(
+                    "reading current firewall: {error}"
+                ))));
+            }
+        };
+        if let Some(error) = existence_error(&action, &observed) {
+            return Err(Box::new(tool_error(error)));
+        }
+        if matches!(action.op.as_str(), "update" | "delete") {
+            action.digest = observed.digest.clone();
+        }
+        let fingerprint = fingerprint_firewall(
+            &action,
+            live_node.as_deref(),
+            live_kind.as_deref(),
+            observed.body.as_ref(),
+        );
+        let (protected_line, waiver_line) =
+            firewall_protection_lines(&action.scope, protected, &summary, &override_);
+        let preview = render_firewall_preview(&action, &observed, &protected_line, &waiver_line);
+        let device = match firewall_device(&action) {
+            Ok(device) => device,
+            Err(error) => return Err(Box::new(tool_error(error))),
+        };
+        let owner = caller
+            .map(|ctx| ctx.token_name.clone())
+            .unwrap_or_else(|| "stdio".to_owned());
+        Ok(PreparedFirewallPlan {
+            action,
+            fingerprint,
+            preview,
+            device,
+            owner,
+            waive_for_lab_mode: matches!(override_, Override::LabMode),
+        })
+    }
+
+    async fn record_firewall_plan(
+        &self,
+        prepared: firewall_change_set::PreparedFirewallPlan,
+    ) -> Result<change_set::ChangeSetResponse, Box<CallToolResult>> {
+        use change_set::ChangeSetResponse;
+
+        let coordinator = self.coordinator.clone();
+        let output = match coordinator
+            .create_change_set(
+                prepared.device.clone(),
+                vec![prepared.action],
+                prepared.owner.clone(),
+                prepared.fingerprint.clone(),
+                "proxmox-no-policy-engine".to_owned(),
+            )
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => return Err(Box::new(tool_error(format!("create: {error}")))),
+        };
+        let Some(mut with_preview) = coordinator
+            .change_sets()
+            .await
+            .into_iter()
+            .find(|record| record.id == output.change_set_id)
+        else {
+            tracing::error!(
+                change_set = %output.change_set_id,
+                "the change set could not be read back; the plan is refused"
+            );
+            return Err(Box::new(tool_error(
+                "plan refused: the change set could not be read back to store its \
+                 preview. It has no preview, so approve and apply will refuse it. \
+                 Plan the operation again.",
+            )));
+        };
+        with_preview.preview = Some(mecmcp_changeset::PreviewRecord {
+            digest: mecmcp_changeset::preview_digest(&prepared.preview),
+            artifact: prepared.preview.clone(),
+            job_id: None,
+        });
+        if let Err(error) = coordinator.update_change_set(with_preview).await {
+            tracing::error!(
+                %error,
+                change_set = %output.change_set_id,
+                "the preview could not be persisted; the plan is refused"
+            );
+            return Err(Box::new(tool_error(format!(
+                "plan refused: the preview could not be persisted ({error}). The \
+                 change set has no stored preview, so approve and apply will refuse \
+                 it. Plan the operation again."
+            ))));
+        }
+        let output = if prepared.waive_for_lab_mode {
+            match coordinator
+                .waive_approval(
+                    output.change_set_id.clone(),
+                    prepared.device.clone(),
+                    prepared.owner.clone(),
+                    output.digest.clone(),
+                )
+                .await
+            {
+                Ok(waived) => waived,
+                Err(error) => return Err(Box::new(tool_error(format!("lab-mode: {error}")))),
+            }
+        } else {
+            output
+        };
+        Ok(ChangeSetResponse {
+            change_set_id: output.change_set_id,
+            state: format!("{:?}", output.state),
+            expected_fingerprint: prepared.fingerprint,
+            preview: prepared.preview,
+            expected_digest: Some(output.digest),
+        })
+    }
+
+    async fn prepare_firewall_apply(
+        &self,
+        args: &firewall_change_set::FirewallChangeSetArgs,
+        caller: Option<&CallerCtx<ProxmoxGrant>>,
+    ) -> Result<FirewallApplyReady, Box<CallToolResult>> {
+        use firewall_change_set::{
+            action_matches_lookup, fingerprint_firewall, revalidate_firewall_action,
+            tool_for_firewall_op,
+        };
+        use rust_proxmoxmcp_core::firewall::{LiveFirewall, observe};
+
+        if let Err(error) = authorize_call(
+            caller,
+            "apply_firewall_change",
+            Some(&args.cluster),
+            WRITE_TOOLS,
+        ) {
+            return Err(Box::new(authz_tool_error(error)));
+        }
+        let device = match firewall_change_set::device_for_lookup(args) {
+            Ok(device) => device,
+            Err(error) => return Err(Box::new(tool_error(error))),
+        };
+        let record = match self
+            .coordinator
+            .change_set(&args.change_set_id, &device)
+            .await
+        {
+            Ok(record) => record,
+            Err(error) => return Err(Box::new(tool_error(format!("get: {error}")))),
+        };
+        if record.preview.is_none() {
+            return Err(Box::new(tool_error(
+                "apply refused: this change set has no stored preview, so the action it \
+                 would take was never recorded for review. Plan the operation again.",
+            )));
+        }
+        if record.state != mecmcp_changeset::ChangeSetState::Approved {
+            return Err(Box::new(tool_error(format!(
+                "change set not approved (state: {:?})",
+                record.state
+            ))));
+        }
+        require_firewall_destructive_tier(caller)?;
+        let action = match firewall_action_from_record(&record) {
+            Ok(action) => action,
+            Err(error) => return Err(Box::new(tool_error(error))),
+        };
+        if !action_matches_lookup(&action, args) {
+            return Err(Box::new(tool_error(
+                "the change set does not address this firewall object".to_owned(),
+            )));
+        }
+        if let Err(error) = revalidate_firewall_action(&action) {
+            return Err(Box::new(tool_error(format!(
+                "the change set records a '{}' action that cannot be applied ({error}). \
+                 Plan the operation again. Nothing was sent to the cluster.",
+                action.op
+            ))));
+        }
+        let Some(op_tool) = tool_for_firewall_op(&action.object, &action.op) else {
+            return Err(Box::new(tool_error(format!(
+                "the change set names an unknown firewall operation '{}'",
+                action.op
+            ))));
+        };
+        if let Err(error) = authorize_call(caller, op_tool, Some(&args.cluster), WRITE_TOOLS) {
+            return Err(Box::new(authz_tool_error(error)));
+        }
+        self.authorize_firewall_mutation(args, &action, caller, Some(record.owner.as_str()))
+            .await?;
+        let client = self.client_for(&args.cluster)?;
+        let (live_node, live_kind) = if action.scope == "guest" {
+            let vmid = action
+                .vmid
+                .ok_or_else(|| Box::new(tool_error("guest firewall change has no vmid")))?;
+            let waiver_op = firewall_change_set::firewall_waiver_op(&action);
+            let gate = self
+                .gate_guest_firewall(
+                    client,
+                    &args.cluster,
+                    vmid,
+                    caller,
+                    &waiver_op,
+                    Some(record.owner.as_str()),
+                )
+                .await?;
+            if action.guest_type.as_deref() != Some(gate.kind.as_str()) {
+                return Err(Box::new(tool_error(
+                    "the guest type changed after the plan; the change set is refused",
+                )));
+            }
+            (Some(gate.node), Some(gate.kind))
+        } else {
+            (None, None)
+        };
+        let observed = match observe(
+            client,
+            &action,
+            LiveFirewall {
+                node: live_node.as_deref(),
+                guest_kind: live_kind.as_deref(),
+            },
+        )
+        .await
+        {
+            Ok(observed) => observed,
+            Err(error) => {
+                return Err(Box::new(tool_error(format!(
+                    "reading current firewall: {error}"
+                ))));
+            }
+        };
+        let current = fingerprint_firewall(
+            &action,
+            live_node.as_deref(),
+            live_kind.as_deref(),
+            observed.body.as_ref(),
+        );
+        if current != record.expected_candidate_fingerprint {
+            return Err(Box::new(tool_error(format!(
+                "fingerprint changed (expected {}, got {current})",
+                record.expected_candidate_fingerprint
+            ))));
+        }
+        let request_id =
+            caller.map_or_else(|| "stdio".to_owned(), |ctx| ctx.request_id.to_string());
+        let principal = caller.map_or_else(|| "stdio".to_owned(), |ctx| ctx.token_name.clone());
+        Ok(FirewallApplyReady {
+            cluster: args.cluster.clone(),
+            record,
+            action,
+            live_node,
+            live_kind,
+            request_id,
+            principal,
+        })
+    }
+
+    async fn finish_firewall_apply(&self, ready: FirewallApplyReady) -> CallToolResult {
+        use rust_proxmoxmcp_core::firewall::{LiveFirewall, execute};
+
+        let FirewallApplyReady {
+            cluster,
+            mut record,
+            action,
+            live_node,
+            live_kind,
+            request_id,
+            principal,
+        } = ready;
+        let client = match self.client_for(&cluster) {
+            Ok(client) => client,
+            Err(error) => return *error,
+        };
+        let coordinator = self.coordinator.clone();
+        record = match coordinator
+            .claim_change_set_for_apply(
+                &record.id,
+                &record.device,
+                mecmcp_changeset::ApplyHandle::None,
+            )
+            .await
+        {
+            Ok(claimed) => claimed,
+            Err(error) => {
+                return tool_error(format!(
+                    "apply refused: the change set could not be claimed for apply ({error}). \
+                     Another apply may already hold it. Nothing was sent to the cluster."
+                ));
+            }
+        };
+        if let Some(recorder) = &self.evidence
+            && let Err(error) =
+                recorder.apply_intent(&request_id, &record.id, &record.device, &principal)
+        {
+            let mut abandoned = record.clone();
+            abandoned.state = mecmcp_changeset::ChangeSetState::Failed;
+            let settled = coordinator.update_change_set(abandoned).await;
+            return tool_error(match settled {
+                Ok(()) => format!(
+                    "apply refused: the apply-intent evidence record could not be persisted \
+                     ({error}); nothing was sent to the cluster and the change set is now \
+                     failed -- plan the operation again"
+                ),
+                Err(settle_error) => format!(
+                    "apply refused: the apply-intent evidence record could not be persisted \
+                     ({error}), and the change set could not then be settled \
+                     ({settle_error}). Nothing was sent to the cluster, but the record is \
+                     still claimed and reads as applying"
+                ),
+            });
+        }
+        let result = execute(
+            client,
+            &action,
+            LiveFirewall {
+                node: live_node.as_deref(),
+                guest_kind: live_kind.as_deref(),
+            },
+        )
+        .await;
+        match result {
+            Ok(()) => {
+                if let Some(recorder) = &self.evidence
+                    && let Err(receipt_error) = recorder.result_receipt(
+                        &request_id,
+                        &record.id,
+                        &record.device,
+                        &principal,
+                        true,
+                        "",
+                    )
+                {
+                    tracing::error!(
+                        %receipt_error,
+                        change_set_id = %record.id,
+                        "the operation completed but its result receipt could not be persisted"
+                    );
+                }
+                record.state = mecmcp_changeset::ChangeSetState::Applied;
+                record.task_id = None;
+                if let Err(error) = coordinator.update_change_set(record).await {
+                    tracing::error!(%error, "could not mark the change set applied");
+                }
+                tool_result::<_, String>(
+                    Ok(serde_json::json!({ "outcome": "ok" })),
+                    ResultFormat::PrettyJson,
+                    RESULT_LIMITS,
+                    OutputRedaction::Apply,
+                )
+            }
+            Err(error) => {
+                let definitive = matches!(
+                    error,
+                    rust_proxmoxmcp_core::ProxmoxError::Api { .. }
+                        | rust_proxmoxmcp_core::ProxmoxError::Unauthorized
+                        | rust_proxmoxmcp_core::ProxmoxError::Denied(_)
+                        | rust_proxmoxmcp_core::ProxmoxError::NotFound { .. }
+                );
+                if definitive {
+                    if let Some(recorder) = &self.evidence
+                        && let Err(receipt_error) = recorder.result_receipt(
+                            &request_id,
+                            &record.id,
+                            &record.device,
+                            &principal,
+                            false,
+                            &error.to_string(),
+                        )
+                    {
+                        tracing::error!(%receipt_error, "failure receipt not persisted");
+                    }
+                    record.state = mecmcp_changeset::ChangeSetState::Failed;
+                    let _ = coordinator.update_change_set(record).await;
+                } else {
+                    tracing::error!(
+                        %error,
+                        "the firewall write failed without a definitive answer; the outcome \
+                         is indeterminate and no result receipt is emitted"
+                    );
+                }
+                tool_error(error)
+            }
+        }
+    }
 }
 
 /// Wrap a filtered tool list in the result shape a 2026-07-28 client accepts.
@@ -7536,6 +8412,10 @@ mod tests {
             "get_ha_rule_change_set",
             "approve_ha_rule_change",
             "apply_ha_rule_change",
+            "plan_firewall_change",
+            "get_firewall_change_set",
+            "approve_firewall_change",
+            "apply_firewall_change",
             "plan_restore_new_vmid",
             "apply_restore_new_vmid",
         ];

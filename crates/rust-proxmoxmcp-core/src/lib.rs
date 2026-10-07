@@ -17,6 +17,7 @@ pub mod catalog;
 pub mod client;
 pub mod error;
 pub mod fingerprint;
+pub mod firewall;
 pub mod grant;
 pub mod guests;
 pub mod ha_rules;
