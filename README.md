@@ -525,7 +525,10 @@ canonical `devices` envelope:
 The inventory and secret file contain placeholder credentials until you
 replace them with values created for your Proxmox deployment. They must be
 regular files with mode `0600`, owned by UID/GID `65532:65532` (the image's
-runtime user); the mounted state directory must also be writable by that UID:
+runtime user). Mount the host `state` directory on `/var/lib/proxmoxmcp` (the
+image volume) and make that directory writable by the same UID. That path is
+the persistence root for change-set state and the audit key, and it is the
+mount `server.json` publishes. Mount the directory itself, not a subdirectory.
 
 ```bash
 chmod 0600 clusters.json secrets/pve-demo.token
@@ -534,10 +537,10 @@ chown -R 65532:65532 clusters.json secrets state
 docker run --rm -i \
   -v "$PWD/clusters.json:/etc/proxmoxmcp/clusters.json:ro" \
   -v "$PWD/secrets:/etc/proxmoxmcp/secrets:ro" \
-  -v "$PWD/state:/var/lib/proxmoxmcp/state:rw" \
+  -v "$PWD/state:/var/lib/proxmoxmcp" \
   ghcr.io/mechubsec/rustproxmoxmcp:latest \
   --transport stdio \
-  --state-file /var/lib/proxmoxmcp/state/changeset-state.json
+  --state-file /var/lib/proxmoxmcp/changeset-state.json
 ```
 
 `tokens.json` (inbound bearer tokens) is used only by the streamable-HTTP
