@@ -28,7 +28,7 @@ jobs:
       # caller, never widened, so this job must grant them itself -- see
       # mecmcp's docs/RELEASE-WORKFLOWS.md.
       id-token: write
-    uses: mechubsec/mecmcp/.github/workflows/reusable-release-image.yml@v0.26.1
+    uses: mechubsec/mecmcp/.github/workflows/reusable-release-image.yml@b529190df5b2f1caa0fe1dd16ef29dbc74c3c51e # v0.26.1
     with:
       # GHCR requires a lowercase image path; github.repository is already lowercase.
       image: ghcr.io/${{ github.repository }}
