@@ -1,0 +1,87 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mechubsec/rustproxmoxmcp",
+  "title": "rust-proxmoxmcp",
+  "description": "Proxmox VE MCP server for many clusters: guest protection, plan/approve/apply change control. Rust.",
+  "version": "0.10.1",
+  "websiteUrl": "https://mechub.org/projects/rustproxmoxmcp/",
+  "repository": {
+    "url": "https://github.com/mechubsec/rustproxmoxmcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/mechubsec/rustproxmoxmcp:0.10.1",
+      "runtimeHint": "docker",
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "--rm",
+          "isRequired": true
+        },
+        {
+          "type": "positional",
+          "value": "-i",
+          "isRequired": true
+        },
+        {
+          "type": "named",
+          "name": "-v",
+          "value": "{clusters_file}:/etc/proxmoxmcp/clusters.json:ro",
+          "isRequired": true,
+          "variables": {
+            "clusters_file": {
+              "description": "Absolute host path to clusters.json (canonical devices envelope; mode 0600, owned by UID 65532)",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        },
+        {
+          "type": "named",
+          "name": "-v",
+          "value": "{secrets_dir}:/etc/proxmoxmcp/secrets:ro",
+          "isRequired": true,
+          "variables": {
+            "secrets_dir": {
+              "description": "Absolute host directory holding the Proxmox API token secret files referenced by clusters.json",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        },
+        {
+          "type": "named",
+          "name": "-v",
+          "value": "{state_dir}:/var/lib/proxmoxmcp",
+          "isRequired": true,
+          "variables": {
+            "state_dir": {
+              "description": "Absolute host directory for persistent state (change sets, audit HMAC key); must be writable by UID 65532",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--transport",
+          "value": "stdio",
+          "isRequired": true
+        },
+        {
+          "type": "named",
+          "name": "--state-file",
+          "value": "/var/lib/proxmoxmcp/changeset-state.json",
+          "isRequired": true
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
