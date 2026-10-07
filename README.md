@@ -500,9 +500,9 @@ See [docs/HOW-TO-SETUP-LXC.md](docs/HOW-TO-SETUP-LXC.md) for step-by-step instru
 
 ### Run with Docker
 
-For an interactive stdio server, prepare `clusters.json`, `tokens.json`, a
-`secrets/` directory, and a writable `state/` directory. The inventory uses
-the canonical `devices` envelope:
+For an interactive stdio server, prepare `clusters.json`, a `secrets/`
+directory, and a writable `state/` directory. The inventory uses the
+canonical `devices` envelope:
 
 ```json
 {
@@ -522,23 +522,28 @@ the canonical `devices` envelope:
 }
 ```
 
-The token store and secret file contain placeholder credentials until you
+The inventory and secret file contain placeholder credentials until you
 replace them with values created for your Proxmox deployment. They must be
 regular files with mode `0600`, owned by UID/GID `65532:65532` (the image's
 runtime user); the mounted state directory must also be writable by that UID:
 
 ```bash
-chmod 0600 tokens.json secrets/pve-demo.token
-chown 65532:65532 tokens.json secrets/pve-demo.token state
+chmod 0600 clusters.json secrets/pve-demo.token
+chown -R 65532:65532 clusters.json secrets state
 
 docker run --rm -i \
   -v "$PWD/clusters.json:/etc/proxmoxmcp/clusters.json:ro" \
-  -v "$PWD/tokens.json:/var/lib/proxmoxmcp/tokens.json:ro" \
   -v "$PWD/secrets:/etc/proxmoxmcp/secrets:ro" \
   -v "$PWD/state:/var/lib/proxmoxmcp/state:rw" \
   ghcr.io/mechubsec/rustproxmoxmcp:latest \
-  --transport stdio
+  --transport stdio \
+  --state-file /var/lib/proxmoxmcp/state/changeset-state.json
 ```
+
+`tokens.json` (inbound bearer tokens) is used only by the streamable-HTTP
+transport; stdio has no token store, so it is not mounted here. `--state-file`
+persists change-set and operation state across restarts — without it, every
+approval, preview and in-flight apply is lost when the container restarts.
 
 The command preserves the image's `ENTRYPOINT` paths and replaces its HTTP
 `CMD` with stdio, so this invocation leaves inbound HTTP and TLS off. See the
