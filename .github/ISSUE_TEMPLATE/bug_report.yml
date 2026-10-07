@@ -12,7 +12,7 @@ body:
     attributes:
       label: Version
       description: rust-proxmoxmcp version (or commit SHA) you're using
-      placeholder: "0.10.0"
+      placeholder: "0.11.0"
     validations:
       required: true
   - type: textarea
