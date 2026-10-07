@@ -14,7 +14,7 @@
 
 ---
 
-## Status: 0.10.0 — the tool surface is complete but for two gaps
+## Status: 0.11.0 — the tool surface is complete but for two gaps
 
 **50 callable tools**: 31 read, 18 `low`, and `apply_proxmox_change_set` as the
 single `destructive` entry point. Seven further names --- `delete_vm`,
@@ -576,7 +576,7 @@ The core crate has a non-default `testing` feature that pulls in `rcgen`, `rustl
 |---|---|---|---|---|---|---|
 | Vendor | Juniper Junos / SRX | Palo Alto PAN-OS | Juniper Mist | Ubiquiti UniFi Network | HPE Juniper Security Director Cloud | Proxmox VE |
 | Transport | NETCONF over SSH | HTTPS XML-API | HTTPS REST | HTTPS REST | HTTPS REST | HTTPS REST |
-| Status | shipping, v0.25.0 | shipping, v0.14.0 | foundation built, read-only live-tenant acceptance passed | in production | pre-release (v0.1.0-lab) | shipping, v0.10.0 |
+| Status | shipping, v0.25.0 | shipping, v0.14.0 | foundation built, read-only live-tenant acceptance passed | in production | pre-release (v0.1.0-lab) | shipping, v0.11.0 |
 
 All six consume `mecmcp` — the shared Rust crate family underneath mechub's per-vendor MCP servers.
 

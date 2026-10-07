@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-07
+
 ### Added
 
+- Official MCP Registry listing (`io.github.mechubsec/rustproxmoxmcp`): the image
+  carries the `io.modelcontextprotocol.server.name` ownership label and the repo
+  ships `server.json` for the stdio Docker invocation.
 - `scripts/package-lxc.sh` builds a Debian 13 LXC tarball at
   `dist/rust-proxmoxmcp_<version>_<arch>.tar.gz` with a `.sha256` sidecar.
   The version comes from the crate manifest (`PROXMOXMCP_PACKAGE_VERSION`
