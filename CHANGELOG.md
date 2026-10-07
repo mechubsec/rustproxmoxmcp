@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/package-lxc.sh` builds a Debian 13 LXC tarball at
+  `dist/rust-proxmoxmcp_<version>_<arch>.tar.gz` with a `.sha256` sidecar.
+  The version comes from the crate manifest (`PROXMOXMCP_PACKAGE_VERSION`
+  overrides it). `PROXMOXMCP_PACKAGE_SKIP_BUILD=1` packages a binary that
+  was already built.
 - Firewall rules, options, aliases, IPSets and security groups are changed
   through `plan_firewall_change`, `approve_firewall_change` and
   `apply_firewall_change`. A write without an approved change set is refused.

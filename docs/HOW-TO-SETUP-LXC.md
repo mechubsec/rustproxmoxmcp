@@ -46,12 +46,15 @@ glibc is forward-incompatible: a binary linked against a newer glibc will not
 start on an older one, and it fails at service start with a loader error *after*
 the old binary has been replaced — an outage, not a build failure.
 
-Take the binary from the release image, which CI builds against the right glibc:
+Take the binary from the release image, which CI builds against the right glibc,
+and place it where the packager looks:
 
 ```bash
+mkdir -p target/release
 docker create --name px ghcr.io/mechubsec/rustproxmoxmcp:0.10.0
-docker cp px:/usr/local/bin/rust-proxmoxmcp ./rust-proxmoxmcp
+docker cp px:/usr/local/bin/rust-proxmoxmcp target/release/rust-proxmoxmcp
 docker rm px
+chmod 0755 target/release/rust-proxmoxmcp
 ```
 
 No docker? On the Proxmox host, `skopeo` is available:
@@ -60,36 +63,36 @@ No docker? On the Proxmox host, `skopeo` is available:
 skopeo copy docker://ghcr.io/mechubsec/rustproxmoxmcp:0.10.0 dir:/tmp/img
 ```
 
-Then find the layer containing `usr/local/bin/rust-proxmoxmcp` and untar it.
+Then find the layer containing `usr/local/bin/rust-proxmoxmcp` and untar it
+into `target/release/rust-proxmoxmcp`.
 
 ## 2. Assemble the install package
 
-**This repo has NO package-building script**, unlike its sibling servers. The
-package is hand-assembled. Note the unusual layout: the binary goes at the
-package **root**, not in `bin/`:
-
-```
-rust-proxmoxmcp                                   (binary, at root)
-packaging/systemd/rust-proxmoxmcp.service
-packaging/systemd/rust-proxmoxmcp.sysusers
-packaging/systemd/rust-proxmoxmcp.tmpfiles
-packaging/examples/clusters.example.json
-packaging/lxc/install.sh
-```
-
-Assemble it:
+`scripts/package-lxc.sh` writes `dist/rust-proxmoxmcp_<version>_<arch>.tar.gz`
+and a `.sha256` sidecar. The version comes from the crate manifest.
 
 ```bash
-cd /path/to/rustproxmoxmcp
-tar czf pkg.tar.gz rust-proxmoxmcp packaging/
+PROXMOXMCP_PACKAGE_SKIP_BUILD=1 ./scripts/package-lxc.sh
 ```
 
-> **Gap:** `rustjunosmcp` ships `scripts/package-lxc.sh` with
-> `JMCP_PACKAGE_SKIP_BUILD=1`; this repo has no equivalent. The package must be
-> hand-assembled as shown above.
+Omit `PROXMOXMCP_PACKAGE_SKIP_BUILD` only when this machine's toolchain is the
+one that should build the binary. The extracted directory is the versioned
+package root. The binary sits at that root, not under `bin/` or
+`usr/local/bin`, because that is where `packaging/lxc/install.sh` looks for it:
+
+```
+rust-proxmoxmcp_<version>_<arch>/
+  rust-proxmoxmcp
+  packaging/systemd/rust-proxmoxmcp.service
+  packaging/systemd/rust-proxmoxmcp.sysusers
+  packaging/systemd/rust-proxmoxmcp.tmpfiles
+  packaging/systemd/ssdf-evidence.conf.example
+  packaging/examples/clusters.example.json
+  packaging/lxc/install.sh
+```
 
 The installer is `#!/bin/sh`, not bash. Invoke it as `bash ./packaging/lxc/install.sh`
-(or `sh`) since it may not be executable in the archive.
+(or `sh`) from the extracted directory.
 
 ## 3. Create the container
 
@@ -118,8 +121,8 @@ guest as safe to destroy, and the fleet's own safety rules key on it.
 ## 4. Install
 
 ```bash
-pct push 616 pkg.tar.gz /tmp/pkg.tar.gz
-pct exec 616 -- bash -lc 'cd /tmp && tar xzf pkg.tar.gz && bash ./packaging/lxc/install.sh'
+pct push 616 dist/rust-proxmoxmcp_0.10.0_amd64.tar.gz /tmp/pkg.tar.gz
+pct exec 616 -- bash -lc 'cd /tmp && tar xzf pkg.tar.gz && cd rust-proxmoxmcp_0.10.0_amd64 && bash ./packaging/lxc/install.sh'
 ```
 
 `install.sh` creates the `proxmoxmcp` service user, installs the binary and the
