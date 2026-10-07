@@ -34,6 +34,8 @@ RUN install -d -m 0750 -o 65532 -g 65532 /stage-etc/proxmoxmcp \
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
 LABEL org.opencontainers.image.source="https://github.com/mechubsec/rustproxmoxmcp"
 LABEL org.opencontainers.image.licenses="MIT"
+# Official MCP Registry ownership check: must equal server.json "name".
+LABEL io.modelcontextprotocol.server.name="io.github.mechubsec/rustproxmoxmcp"
 
 # CA certificates are shipped in gcr.io/distroless/cc-* at /etc/ssl/certs. The
 # binary makes outbound TLS calls (HTTPS to Proxmox API and SSDF endpoint), and
