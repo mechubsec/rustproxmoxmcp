@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Docker run examples mount the host state directory at `/var/lib/proxmoxmcp`
+  and pass `--state-file /var/lib/proxmoxmcp/changeset-state.json`, matching
+  `server.json`.
+
 ## [0.11.0] - 2026-10-07
 
 ### Added
