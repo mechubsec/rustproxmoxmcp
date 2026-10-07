@@ -498,6 +498,58 @@ Run `rust-proxmoxmcp --help` for the complete list.
 
 See [docs/HOW-TO-SETUP-LXC.md](docs/HOW-TO-SETUP-LXC.md) for step-by-step instructions on building a rust-proxmoxmcp LXC from scratch. For Docker, see [docs/HOW-TO-SETUP-DOCKER.md](docs/HOW-TO-SETUP-DOCKER.md).
 
+### Run with Docker
+
+For an interactive stdio server, prepare `clusters.json`, a `secrets/`
+directory, and a writable `state/` directory. The inventory uses the
+canonical `devices` envelope:
+
+```json
+{
+  "version": 1,
+  "devices": {
+    "pve-demo": {
+      "endpoint": "https://198.51.100.10:8006",
+      "token_id": "mcp-automation@pve!mcp",
+      "token_secret_file": "/etc/proxmoxmcp/secrets/pve-demo.token",
+      "protected_vmids": [100, 101],
+      "protected_tags": ["protected"]
+    }
+  },
+  "policy": {
+    "resource_cache_ttl_secs": 10
+  }
+}
+```
+
+The inventory and secret file contain placeholder credentials until you
+replace them with values created for your Proxmox deployment. They must be
+regular files with mode `0600`, owned by UID/GID `65532:65532` (the image's
+runtime user); the mounted state directory must also be writable by that UID:
+
+```bash
+chmod 0600 clusters.json secrets/pve-demo.token
+chown -R 65532:65532 clusters.json secrets state
+
+docker run --rm -i \
+  -v "$PWD/clusters.json:/etc/proxmoxmcp/clusters.json:ro" \
+  -v "$PWD/secrets:/etc/proxmoxmcp/secrets:ro" \
+  -v "$PWD/state:/var/lib/proxmoxmcp/state:rw" \
+  ghcr.io/mechubsec/rustproxmoxmcp:latest \
+  --transport stdio \
+  --state-file /var/lib/proxmoxmcp/state/changeset-state.json
+```
+
+`tokens.json` (inbound bearer tokens) is used only by the streamable-HTTP
+transport; stdio has no token store, so it is not mounted here. `--state-file`
+persists change-set and operation state across restarts — without it, every
+approval, preview and in-flight apply is lost when the container restarts.
+
+The command preserves the image's `ENTRYPOINT` paths and replaces its HTTP
+`CMD` with stdio, so this invocation leaves inbound HTTP and TLS off. See the
+[Docker how-to](docs/HOW-TO-SETUP-DOCKER.md) for the two-person and lab-mode
+streamable-HTTP setup.
+
 `packaging/lxc/install.sh` is a POSIX installer targeting Debian 13 LXC. The installer:
 - Creates the `proxmoxmcp` system user
 - Installs the binary to `/usr/local/bin/rust-proxmoxmcp`
