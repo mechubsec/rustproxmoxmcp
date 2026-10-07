@@ -122,6 +122,9 @@ outside the tool call: **there is deliberately no `grant_waiver` tool and no
   - An HA rule change planned through `plan_ha_rule_change`: `ha_rule_`
     followed by that call's `op` (`ha_rule_create`, `ha_rule_update`,
     `ha_rule_delete`).
+  - A firewall change planned through `plan_firewall_change`: `firewall_`
+    followed by the object and the operation (`firewall_rule_create`,
+    `firewall_options_update`, `firewall_ipset_entry_delete`).
   - A restore that targets a *new* VMID (`restore_backup_new_vmid`): the
     fixed string `restore_new_vmid`, naming the archive owner guest the
     waiver protects, not the new VMID.
@@ -192,10 +195,12 @@ addressing an endpoint that cannot exist.
 
 Firewall reads mirror the scopes Proxmox itself exposes: node-level firewall
 config has rules and options but no aliases, IPSets or security groups —
-those exist only at cluster and guest scope. All fourteen firewall tools are
-read-only: none of them appear in `WRITE_TOOLS`, so nothing here can create,
-edit or delete a rule, alias, IPSet or security group. That capability is
-tracked separately as governed firewall writes.
+those exist only at cluster and guest scope. Firewall writes use
+`plan_firewall_change`, `approve_firewall_change` and `apply_firewall_change`.
+A firewall write without an approved change set is refused. Lab-mode and
+two-person approval follow the same rules as the other governed writes:
+`--lab-mode` approves a plan for a protected guest with no second principal,
+while an ordinary guest, and a cluster or node firewall, still require one.
 
 **Pagination:** `get_vms`, `get_containers` and `list_backups` have no bound
 on cluster/node/storage size and can exceed the MCP result's 512 KiB cap on
@@ -396,6 +401,7 @@ privileges guard.
 | `VM.Clone` | `clone_vm` |
 | `VM.Config.Disk` | `resize_disk` |
 | `VM.Config.CPU`, `VM.Config.Memory` | `update_container_resources` (cores vs. memory/swap) |
+| `VM.Config.Network` | Guest firewall apply (`apply_firewall_change` for one guest). Proxmox checks this on `/vms/{vmid}` |
 | `VM.Allocate` | `create_vm`, `create_container`, `delete_vm`/`delete_container` (the `destroy_guest` apply-time op), and `restore_backup` when it overwrites an existing VMID |
 | `Datastore.AllocateSpace` | `create_vm`/`create_container` (disk allocation), `create_backup`, `delete_backup` |
 | `Datastore.AllocateTemplate` | `download_iso` (the destination storage) |
@@ -421,14 +427,15 @@ pveum role add ProxmoxMcpIsoDelete -privs "Datastore.Allocate"
 pveum acl modify /storage/<iso-storage> --users mcp-automation@pve --roles ProxmoxMcpIsoDelete
 ```
 
-`Sys.Modify` on `/` is deliberately **not** in the role above. The only tool
-that can touch it is `stop_task`, and `API2/Tasks.pm` only requires
-`Sys.Modify` when the caller is stopping a task it does not own; this
-server's own tasks always belong to its own token, so the common case needs
-nothing extra. `Sys.Modify` at `/` is a broad node-admin grant — node network
-config, disk init and wipe, `apt`, and more — so add it only if this token
-must be able to stop tasks that *other* principals started on the same
-cluster:
+`Sys.Modify` on `/` is deliberately **not** in the role above. Cluster and
+node firewall apply needs it (cluster objects on `/`, a node's firewall on
+`/nodes/{node}`), and `stop_task` needs it when `API2/Tasks.pm` is stopping a
+task the caller does not own. This server's own tasks always belong to its
+own token, so stopping those needs nothing extra. Plan and approve of a
+firewall change only read (`Sys.Audit` or `VM.Audit`). `Sys.Modify` at `/` is
+a broad node-admin grant — node network config, disk init and wipe, `apt`,
+and more — so add it only when this token must apply a cluster or node
+firewall change, or stop tasks that *other* principals started:
 
 ```sh
 pveum role modify ProxmoxMcp -privs "...,Sys.Modify" # append to the existing list

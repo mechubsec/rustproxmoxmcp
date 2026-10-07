@@ -132,6 +132,63 @@ pub fn ha_rule_fingerprint(
     format!("sha256:{}", hex)
 }
 
+/// Identity and current body of one firewall object.
+///
+/// The identity fields are part of the hash so two objects on the same cluster
+/// cannot share a fingerprint. They are not a substitute for [`Self::body`]:
+/// an apply recomputes this from the live read and refuses when it differs.
+pub struct FirewallFingerprint<'a> {
+    /// Inventory cluster name.
+    pub cluster: &'a str,
+    /// `cluster`, `node` or `guest`.
+    pub scope: &'a str,
+    /// Object family, such as `rule` or `alias`.
+    pub object: &'a str,
+    /// Node name, for a node firewall or a resolved guest.
+    pub node: Option<&'a str>,
+    /// Guest id, for guest scope.
+    pub vmid: Option<u32>,
+    /// `qemu` or `lxc`, for guest scope.
+    pub guest_kind: Option<&'a str>,
+    /// Security group, IPSet or alias name.
+    pub name: Option<&'a str>,
+    /// The object as the cluster reported it.
+    ///
+    /// A ruleset array, an options object, one alias, or `None` when a named
+    /// object is absent. Proxmox's own `digest` field, when the object has
+    /// one, is inside this body, so a digest change is a fingerprint change.
+    pub body: Option<&'a serde_json::Value>,
+}
+
+/// Computes a stable fingerprint of one firewall object's current state.
+///
+/// Returns `sha256:<lowercase hex>`, matching [`fingerprint`].
+#[must_use]
+pub fn firewall_fingerprint(parts: &FirewallFingerprint<'_>) -> String {
+    let tuple = (
+        parts.cluster,
+        parts.scope,
+        parts.object,
+        parts.node,
+        parts.vmid,
+        parts.guest_kind,
+        parts.name,
+        parts.body,
+    );
+    let bytes =
+        serde_json::to_vec(&tuple).expect("tuple serialization cannot fail with these types");
+
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let hash = hasher.finalize();
+
+    let hex = hash
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+    format!("sha256:{}", hex)
+}
+
 /// Computes a stable fingerprint for a VMID that a restore-to-new-vmid plan
 /// targets, before any guest exists there.
 ///

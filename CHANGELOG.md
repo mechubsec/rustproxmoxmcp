@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Firewall rules, options, aliases, IPSets and security groups are changed
+  through `plan_firewall_change`, `approve_firewall_change` and
+  `apply_firewall_change`. A write without an approved change set is refused.
+  Lab-mode and two-person approval follow the same rules as other governed
+  writes.
+
 ### Security
 
 Fixes from the MEC-446/MEC-1163 authorization audit (F1-F4, L1-L3):
