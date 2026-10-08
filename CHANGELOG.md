@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-08
+
+### Added
+
+- Release images are also pushed to Docker Hub (`docker.io/mechub/rustproxmoxmcp`),
+  alongside the existing GHCR image, with the same tags.
+
 ### Changed
 
 - Docker run examples mount the host state directory at `/var/lib/proxmoxmcp`
