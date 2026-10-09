@@ -6,10 +6,11 @@ mod readiness;
 mod server;
 
 use anyhow::{Context as _, Result};
-use cli::{ProxmoxCli, TokenCli, TokenCommand};
+use cli::{ProxmoxCli, TokenCli, TokenCommand, server_naming};
 use http_transport::build_http_router;
 use mecmcp_auth::TokenStoreFile;
 use mecmcp_runtime::cli::{Command, TokenAction, Transport};
+use mecmcp_secret::validate::{CredentialFileRole, CredentialFileSpec, validate_credential_files};
 use mecmcp_transport::{LimitsConfig, serve_router};
 use rmcp::ServiceExt as _;
 use rust_proxmoxmcp_core::{
@@ -17,29 +18,42 @@ use rust_proxmoxmcp_core::{
     resolve::GuestIndex, selector::Selector,
 };
 use server::ProxmoxServer;
-use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+
+/// Canonical token store and the legacy `/etc` location an unmigrated
+/// install may still be using.
+fn token_store_paths() -> (PathBuf, PathBuf) {
+    let naming = server_naming();
+    (
+        naming.state_dir.join("tokens.json"),
+        naming.config_dir.join("tokens.json"),
+    )
+}
 
 /// Resolve the token file path, applying the legacy fallback ONLY when the
-/// configured path is the canonical /var/lib/proxmoxmcp/tokens.json.
+/// configured path is the canonical `/var/lib/proxmoxmcp/tokens.json`.
 ///
 /// Any other configured path is used verbatim and fails if absent — that is the
 /// honest outcome. This prevents a typo or deliberately deleted custom store from
 /// silently reactivating unrelated or revoked credentials at the legacy path.
-fn resolve_tokens(configured: &std::path::Path) -> Result<mecmcp_auth::ResolvedTokenPath> {
-    resolve_tokens_with(
-        configured,
-        std::path::Path::new("/var/lib/proxmoxmcp/tokens.json"),
-        std::path::Path::new("/etc/proxmoxmcp/tokens.json"),
-    )
+fn resolve_tokens(configured: &Path) -> Result<mecmcp_auth::ResolvedTokenPath> {
+    let (canonical, legacy) = token_store_paths();
+    resolve_tokens_with(configured, &canonical, &legacy)
 }
 
 /// The rule behind [`resolve_tokens`], with the two well-known paths injected so
 /// it can be exercised against real files in a test rather than against absolute
 /// paths that never exist there.
 fn resolve_tokens_with(
-    configured: &std::path::Path,
-    canonical: &std::path::Path,
-    legacy: &std::path::Path,
+    configured: &Path,
+    canonical: &Path,
+    legacy: &Path,
 ) -> Result<mecmcp_auth::ResolvedTokenPath> {
     // Byte-exact, not `Path` equality. `Path` comparison normalizes away trailing
     // separators and `.` components, so `/var/lib/<svc>/tokens.json/` compares
@@ -56,6 +70,147 @@ fn resolve_tokens_with(
     }
 
     mecmcp_auth::resolve_token_path(configured, legacy).context("resolving token file path")
+}
+
+/// Token store the HTTP listener will load.
+///
+/// Stdio does not consult `--tokens-file`. The container entrypoint bakes
+/// that flag in, and a stdio start must not fail because the bearer store
+/// is absent.
+fn listener_tokens(args: &ProxmoxCli) -> Result<Option<mecmcp_auth::ResolvedTokenPath>> {
+    match args.common.transport {
+        Transport::Stdio => Ok(None),
+        Transport::StreamableHttp => match args.common.tokens_file.as_deref() {
+            Some(path) => Ok(Some(resolve_tokens(path)?)),
+            None => Ok(None),
+        },
+    }
+}
+
+/// API token paths named by `clusters.json`.
+///
+/// This only discovers the paths. Mode is enforced later, with every other
+/// file, by [`validate_startup_credentials`]. A missing or unreadable
+/// inventory yields an empty list; the mode pass still reports the inventory
+/// itself. `ca_pem_path` is not collected: a cluster CA bundle is public
+/// trust material, loaded with a plain read that accepts mode `0644`.
+fn cluster_token_secret_files(clusters_file: &Path) -> Vec<PathBuf> {
+    let limit = mecmcp_secret::FileLimits::default().max_bytes;
+    let bytes = match std::fs::metadata(clusters_file) {
+        Ok(metadata) if metadata.len() > u64::try_from(limit).unwrap_or(u64::MAX) => {
+            return Vec::new();
+        }
+        Ok(_) => match std::fs::read(clusters_file) {
+            Ok(bytes) if bytes.len() <= limit => bytes,
+            _ => return Vec::new(),
+        },
+        Err(_) => return Vec::new(),
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let Some(devices) = value.get("devices").and_then(|entry| entry.as_object()) else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    for device in devices.values() {
+        let Some(path) = device
+            .get("token_secret_file")
+            .and_then(|entry| entry.as_str())
+        else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        paths.push(PathBuf::from(path));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// Files whose mode is checked together, before any of them is loaded.
+///
+/// A startup that checks one file and exits reports the next bad mode only
+/// on the next restart. [`validate_startup_credentials`] asks `mecmcp-secret`
+/// to report every offender in this list at once.
+struct StartupCredentialFiles<'a> {
+    /// `clusters.json`. Required. The document holds no credential, but the
+    /// inventory loader is `read_hardened_file`, which rejects group and
+    /// other bits, so the required mode stays `0600`.
+    clusters: &'a Path,
+    /// Waiver file. Checked when the path is configured. An absent file is
+    /// an empty waiver list, so a missing file is not a failure.
+    waivers: Option<&'a Path>,
+    /// Bearer-token store this process will load. Required when set.
+    tokens: Option<&'a Path>,
+    /// Audit HMAC key. Required when set; the caller creates a missing key first.
+    audit_hmac_key: Option<&'a Path>,
+    /// Approval digest key from `--approval-digest-key-file`. Required when set.
+    approval_digest_key: Option<&'a Path>,
+}
+
+/// Check every credential-adjacent file in one pass.
+///
+/// On-disk paths are unchanged. The inventory path is whatever
+/// `--clusters-file` names, each API token path is the one that inventory
+/// names, and the bearer-store path is the one [`resolve_tokens`] already
+/// selected, including the legacy `/etc` store when that fallback is in
+/// effect. A cluster CA bundle is not in this list.
+fn validate_startup_credentials(files: &StartupCredentialFiles<'_>) -> Result<()> {
+    let token_files = cluster_token_secret_files(files.clusters);
+    let mut specs = Vec::with_capacity(5 + token_files.len());
+    specs.push(CredentialFileSpec {
+        path: files.clusters,
+        role: CredentialFileRole::Secret,
+        description: "cluster inventory",
+        required: true,
+    });
+    for path in &token_files {
+        specs.push(CredentialFileSpec {
+            path,
+            role: CredentialFileRole::Secret,
+            description: "cluster API token",
+            required: false,
+        });
+    }
+    if let Some(path) = files.waivers {
+        specs.push(CredentialFileSpec {
+            path,
+            role: CredentialFileRole::Secret,
+            description: "operator waivers",
+            required: false,
+        });
+    }
+    if let Some(path) = files.tokens {
+        specs.push(CredentialFileSpec {
+            path,
+            role: CredentialFileRole::Secret,
+            description: "bearer token store",
+            required: true,
+        });
+    }
+    if let Some(path) = files.audit_hmac_key {
+        specs.push(CredentialFileSpec {
+            path,
+            role: CredentialFileRole::Secret,
+            description: "audit HMAC key",
+            required: true,
+        });
+    }
+    if let Some(path) = files.approval_digest_key {
+        specs.push(CredentialFileSpec {
+            path,
+            role: CredentialFileRole::Secret,
+            description: "approval digest key",
+            required: true,
+        });
+    }
+
+    validate_credential_files(&specs)?;
+    Ok(())
 }
 
 /// Build a vendor grant from TokenCommand::Add fields.
@@ -266,9 +421,6 @@ async fn main() -> Result<()> {
 
     let audit_sink = init_audit(&args.common)?;
 
-    let approval_digest_key =
-        load_approval_digest_key(args.common.approval_digest_key_file.as_deref())?;
-
     if let Some(Command::Token { .. }) = args.common.command.take() {
         // This path fires when a server flag precedes the subcommand
         // (e.g., `--clusters-file X token add ...`). The early dispatch at argv[1]
@@ -280,6 +432,25 @@ async fn main() -> Result<()> {
              rust-proxmoxmcp token add [options]"
         ));
     }
+
+    // Resolve before the mode pass so a legacy `/etc` store is the file that
+    // gets checked, not the canonical path that is not there yet. `init_audit`
+    // already created a missing HMAC key, so the mode pass sees the file it
+    // will actually use.
+    let tokens_resolved = listener_tokens(&args)?;
+    validate_startup_credentials(&StartupCredentialFiles {
+        clusters: &args.clusters_file,
+        waivers: Some(&args.waivers_file),
+        tokens: tokens_resolved
+            .as_ref()
+            .map(|resolved| resolved.path.as_path()),
+        audit_hmac_key: args.common.audit_hmac_key_file.as_deref(),
+        approval_digest_key: args.common.approval_digest_key_file.as_deref(),
+    })
+    .context("credential file validation")?;
+
+    let approval_digest_key =
+        load_approval_digest_key(args.common.approval_digest_key_file.as_deref())?;
 
     let clusters = Arc::new(
         ClusterInventory::load(&args.clusters_file)
@@ -379,15 +550,13 @@ async fn main() -> Result<()> {
             .await
         }
         Transport::StreamableHttp => {
-            let token_store = load_http_token_store(&args.common)?;
+            let token_store = load_http_token_store(tokens_resolved, args.common.allow_no_auth)?;
 
             // Check for stale secrets (superseded token files, old TLS keys) in both
-            // /var/lib/proxmoxmcp and /etc/proxmoxmcp. Warn, never refuse.
+            // the state dir and the config dir. Warn, never refuse.
+            let naming = server_naming();
             let live_files = ["tokens.json"];
-            for dir in [
-                std::path::Path::new("/var/lib/proxmoxmcp"),
-                std::path::Path::new("/etc/proxmoxmcp"),
-            ] {
+            for dir in [&naming.state_dir, &naming.config_dir] {
                 let stale = mecmcp_auth::find_stale_secrets(dir, &live_files);
                 for secret in stale {
                     tracing::warn!(
@@ -692,26 +861,28 @@ async fn serve_stdio(
 }
 
 fn load_http_token_store(
-    args: &mecmcp_runtime::cli::Cli,
+    resolved: Option<mecmcp_auth::ResolvedTokenPath>,
+    allow_no_auth: bool,
 ) -> Result<Option<Arc<TokenStoreFile<ProxmoxGrant>>>> {
-    match (&args.tokens_file, args.allow_no_auth) {
-        (Some(path), false) => {
+    match (resolved, allow_no_auth) {
+        (Some(resolved), false) => {
             // The CONFIGURED path is the primary; /etc is the legacy fallback, so an
             // upgrade whose tokens have not been moved yet still starts.
             //
             // Apply the legacy /etc fallback ONLY when the configured path is the
-            // canonical /var/lib/proxmoxmcp/tokens.json. A typo or deliberately
-            // deleted custom store must fail, not silently reactivate credentials
-            // from /etc. The resolve_tokens wrapper enforces that restriction.
-            let resolved = resolve_tokens(path)?;
-
+            // canonical state-dir store. A typo or deliberately deleted custom
+            // store must fail, not silently reactivate credentials from /etc.
+            // [`resolve_tokens`] enforces that restriction, and the mode pass
+            // already checked the path this function loads.
             if let (true, Some(fallback_from)) = (resolved.used_fallback, &resolved.fallback_from) {
+                let (canonical, _) = token_store_paths();
                 tracing::warn!(
                     path = %resolved.path.display(),
                     fallback_from = %fallback_from.display(),
                     "Using fallback token file (primary does not exist). \
                      Token operations (add, revoke, rotate) will fail under ProtectSystem=strict. \
-                     Move to /var/lib/proxmoxmcp/tokens.json to restore write capability."
+                     Move to {canonical} to restore write capability.",
+                    canonical = canonical.display()
                 );
             }
 
@@ -1113,5 +1284,186 @@ mod shared_cli_security_option_tests {
     fn no_otel_endpoint_starts_normally() {
         let cli = ProxmoxCli::parse_from(["rust-proxmoxmcp"]);
         init_audit(&cli.common).expect("no --otel-endpoint must not be refused");
+    }
+}
+
+#[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used)]
+mod startup_credential_tests {
+    use super::{
+        StartupCredentialFiles, listener_tokens, token_store_paths, validate_startup_credentials,
+    };
+    use crate::cli::ProxmoxCli;
+    use clap::Parser as _;
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    fn write_file(dir: &std::path::Path, name: &str, body: &[u8], mode: u32) -> PathBuf {
+        let path = dir.join(name);
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        path
+    }
+
+    fn inventory(token_file: &std::path::Path, ca_file: &std::path::Path) -> String {
+        format!(
+            r#"{{"version":1,"devices":{{"pve3":{{"endpoint":"https://pve3.example.org:8006","token_id":"root@pam!mcp","token_secret_file":"{}","ca_pem_path":"{}"}}}}}}"#,
+            token_file.display(),
+            ca_file.display()
+        )
+    }
+
+    /// Two loose modes must come back together. The failure this guards is a
+    /// startup that names the first file, exits, and only names the second
+    /// after that restart. The CA bundle is mode 0644 and must not be named:
+    /// that file is public trust material and is not part of this pass.
+    #[test]
+    fn one_pass_reports_every_bad_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = write_file(dir.path(), "pve3.token", b"secret\n", 0o640);
+        let ca = write_file(dir.path(), "ca.pem", b"trust-anchor\n", 0o644);
+        let body = inventory(&token, &ca);
+        let clusters = write_file(dir.path(), "clusters.json", body.as_bytes(), 0o644);
+
+        let error = validate_startup_credentials(&StartupCredentialFiles {
+            clusters: &clusters,
+            waivers: None,
+            tokens: None,
+            audit_hmac_key: None,
+            approval_digest_key: None,
+        })
+        .expect_err("both files are looser than their role allows");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("2 credential file"),
+            "expected both failures in one error, got {message}"
+        );
+        assert!(message.contains("clusters.json"), "{message}");
+        assert!(message.contains("pve3.token"), "{message}");
+        assert!(message.contains("0644"), "{message}");
+        assert!(message.contains("0640"), "{message}");
+        assert!(
+            !message.contains("ca.pem"),
+            "a world-readable CA bundle must stay out of this pass, got {message}"
+        );
+    }
+
+    /// `0600` is the mode the hardened loaders accept. A missing waiver file
+    /// is an empty list. A `0644` CA bundle named by the inventory is not a
+    /// credential file.
+    #[test]
+    fn acceptable_modes_pass_and_a_world_readable_ca_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = write_file(dir.path(), "pve3.token", b"secret\n", 0o600);
+        let ca = write_file(dir.path(), "ca.pem", b"trust-anchor\n", 0o644);
+        let body = inventory(&token, &ca);
+        let clusters = write_file(dir.path(), "clusters.json", body.as_bytes(), 0o600);
+        let hmac = write_file(dir.path(), "audit-hmac.key", b"abcd", 0o600);
+        let missing_waivers = dir.path().join("waivers.json");
+
+        validate_startup_credentials(&StartupCredentialFiles {
+            clusters: &clusters,
+            waivers: Some(&missing_waivers),
+            tokens: None,
+            audit_hmac_key: Some(&hmac),
+            approval_digest_key: None,
+        })
+        .expect("0600 secrets, an absent waiver file, and a 0644 CA bundle must pass");
+    }
+
+    /// A waiver file that exists is part of the same pass. An acceptable
+    /// inventory next to it must not be named.
+    #[test]
+    fn a_present_waivers_file_joins_the_same_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = write_file(dir.path(), "pve3.token", b"secret\n", 0o600);
+        let ca = write_file(dir.path(), "ca.pem", b"trust-anchor\n", 0o644);
+        let body = inventory(&token, &ca);
+        let clusters = write_file(dir.path(), "clusters.json", body.as_bytes(), 0o600);
+        let waivers = write_file(dir.path(), "waivers.json", b"{}\n", 0o644);
+        let tokens = write_file(dir.path(), "tokens.json", b"{}\n", 0o640);
+
+        let error = validate_startup_credentials(&StartupCredentialFiles {
+            clusters: &clusters,
+            waivers: Some(&waivers),
+            tokens: Some(&tokens),
+            audit_hmac_key: None,
+            approval_digest_key: None,
+        })
+        .expect_err("a loose waiver file and a loose token store must both fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("2 credential file"),
+            "expected both failures in one error, got {message}"
+        );
+        assert!(message.contains("waivers.json"), "{message}");
+        assert!(message.contains("tokens.json"), "{message}");
+        assert!(
+            !message.contains("clusters.json"),
+            "an acceptable inventory must not be named, got {message}"
+        );
+        assert!(
+            !message.contains("ca.pem"),
+            "a world-readable CA bundle must stay out of this pass, got {message}"
+        );
+    }
+
+    /// A token path the inventory names, and that is not on disk yet, is not
+    /// a mode failure. The loader reports the absence when it builds the client.
+    #[test]
+    fn a_missing_token_file_is_not_a_mode_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("pve3.token");
+        let ca = write_file(dir.path(), "ca.pem", b"trust-anchor\n", 0o644);
+        let body = inventory(&missing, &ca);
+        let clusters = write_file(dir.path(), "clusters.json", body.as_bytes(), 0o600);
+
+        validate_startup_credentials(&StartupCredentialFiles {
+            clusters: &clusters,
+            waivers: None,
+            tokens: None,
+            audit_hmac_key: None,
+            approval_digest_key: None,
+        })
+        .expect("a missing token file is outside this pass");
+    }
+
+    #[test]
+    fn deployed_token_paths_come_from_the_shared_layout() {
+        let (canonical, legacy) = token_store_paths();
+        assert_eq!(canonical, PathBuf::from("/var/lib/proxmoxmcp/tokens.json"));
+        assert_eq!(legacy, PathBuf::from("/etc/proxmoxmcp/tokens.json"));
+    }
+
+    #[test]
+    fn stdio_does_not_require_the_token_store() {
+        let cli = ProxmoxCli::try_parse_from([
+            "rust-proxmoxmcp",
+            "--transport",
+            "stdio",
+            "--tokens-file",
+            "/var/lib/proxmoxmcp/tokens.json",
+        ])
+        .unwrap();
+        assert!(listener_tokens(&cli).unwrap().is_none());
+    }
+
+    #[test]
+    fn http_checks_the_configured_token_path() {
+        let cli = ProxmoxCli::try_parse_from([
+            "rust-proxmoxmcp",
+            "--transport",
+            "streamable-http",
+            "--tokens-file",
+            "/srv/custom-tokens.json",
+        ])
+        .unwrap();
+        let resolved = listener_tokens(&cli).unwrap().unwrap();
+        assert_eq!(resolved.path, PathBuf::from("/srv/custom-tokens.json"));
+        assert!(!resolved.used_fallback);
     }
 }

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Startup reports every loose credential-file mode in one pass.**
+  `clusters.json`, each per-cluster API token file the inventory names,
+  `tokens.json`, `waivers.json` when that file is present, the audit HMAC
+  key, and the approval-digest key are checked together. Those files stay
+  mode `0600`. A cluster CA bundle stays a plain read: it is public trust
+  material and may be mode `0644`. On-disk directories stay
+  `/etc/proxmoxmcp` and `/var/lib/proxmoxmcp`. `tokens.json` stays
+  `/var/lib/proxmoxmcp/tokens.json`, and the legacy
+  `/etc/proxmoxmcp/tokens.json` fallback still applies only to that exact
+  path. Stdio still does not require the bearer store.
+
 ## [0.11.1] - 2026-10-08
 
 ### Added

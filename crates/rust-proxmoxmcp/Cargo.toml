@@ -25,6 +25,7 @@ mecmcp-changeset = { workspace = true }
 mecmcp-job       = { workspace = true }
 mecmcp-redact    = { workspace = true }
 mecmcp-runtime   = { workspace = true }
+mecmcp-secret    = { workspace = true }
 mecmcp-server    = { workspace = true }
 mecmcp-transport = { workspace = true }
 rmcp             = { workspace = true }
