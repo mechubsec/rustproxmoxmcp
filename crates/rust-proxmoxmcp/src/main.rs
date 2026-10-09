@@ -89,8 +89,10 @@ fn listener_tokens(args: &ProxmoxCli) -> Result<Option<mecmcp_auth::ResolvedToke
 
 /// API token paths named by `clusters.json`.
 ///
-/// This only discovers the paths. Mode is enforced later, with every other
-/// file, by [`validate_startup_credentials`]. A missing or unreadable
+/// Discovery follows the three shapes `mecmcp-inventory` loads: a `devices`
+/// object, a `devices` array, or a flat map whose keys do not start with
+/// `_`. This only discovers the paths. Mode is enforced later, with every
+/// other file, by [`validate_startup_credentials`]. A missing or unreadable
 /// inventory yields an empty list; the mode pass still reports the inventory
 /// itself. `ca_pem_path` is not collected: a cluster CA bundle is public
 /// trust material, loaded with a plain read that accepts mode `0644`.
@@ -110,11 +112,8 @@ fn cluster_token_secret_files(clusters_file: &Path) -> Vec<PathBuf> {
         Ok(value) => value,
         Err(_) => return Vec::new(),
     };
-    let Some(devices) = value.get("devices").and_then(|entry| entry.as_object()) else {
-        return Vec::new();
-    };
     let mut paths = Vec::new();
-    for device in devices.values() {
+    for device in inventory_device_values(&value) {
         let Some(path) = device
             .get("token_secret_file")
             .and_then(|entry| entry.as_str())
@@ -129,6 +128,30 @@ fn cluster_token_secret_files(clusters_file: &Path) -> Vec<PathBuf> {
     paths.sort();
     paths.dedup();
     paths
+}
+
+/// Device objects from any inventory shape the loader accepts.
+///
+/// A `devices` object contributes its values. A `devices` array contributes
+/// its elements. With no `devices` key, the top-level values are the devices,
+/// except keys that start with `_` (`_blocklist_defaults` is policy, not a
+/// cluster). A `devices` value that is neither object nor array is ignored:
+/// the loader rejects that document, and this pass still checks the inventory
+/// file itself.
+fn inventory_device_values(value: &serde_json::Value) -> Vec<&serde_json::Value> {
+    let Some(root) = value.as_object() else {
+        return Vec::new();
+    };
+    match root.get("devices") {
+        Some(serde_json::Value::Object(devices)) => devices.values().collect(),
+        Some(serde_json::Value::Array(devices)) => devices.iter().collect(),
+        Some(_) => Vec::new(),
+        None => root
+            .iter()
+            .filter(|(key, _)| !key.starts_with('_'))
+            .map(|(_, device)| device)
+            .collect(),
+    }
 }
 
 /// Files whose mode is checked together, before any of them is loaded.
@@ -1409,6 +1432,54 @@ mod startup_credential_tests {
         assert!(
             !message.contains("ca.pem"),
             "a world-readable CA bundle must stay out of this pass, got {message}"
+        );
+    }
+
+    fn assert_loose_token_and_waivers_are_both_named(body: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let token = write_file(dir.path(), "pve3.token", b"secret\n", 0o640);
+        let clusters_body = body.replace("{token}", &token.display().to_string());
+        let clusters = write_file(dir.path(), "clusters.json", clusters_body.as_bytes(), 0o600);
+        let waivers = write_file(dir.path(), "waivers.json", b"{}\n", 0o644);
+
+        let error = validate_startup_credentials(&StartupCredentialFiles {
+            clusters: &clusters,
+            waivers: Some(&waivers),
+            tokens: None,
+            audit_hmac_key: None,
+            approval_digest_key: None,
+        })
+        .expect_err("the loose token file and the loose waiver file must both fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("2 credential file"),
+            "expected both failures in one error, got {message}"
+        );
+        assert!(message.contains("pve3.token"), "{message}");
+        assert!(message.contains("waivers.json"), "{message}");
+        assert!(message.contains("0640"), "{message}");
+        assert!(message.contains("0644"), "{message}");
+        assert!(
+            !message.contains("clusters.json"),
+            "an acceptable inventory must not be named, got {message}"
+        );
+    }
+
+    /// A legacy flat map has no `devices` key. The token file it names is
+    /// still part of the one pass, next to a loose waiver file.
+    #[test]
+    fn a_flat_map_inventory_names_its_token_file() {
+        assert_loose_token_and_waivers_are_both_named(
+            r#"{"pve3":{"endpoint":"https://pve3.example.org:8006","token_id":"root@pam!mcp","token_secret_file":"{token}"},"_blocklist_defaults":{"resource_cache_ttl_secs":10}}"#,
+        );
+    }
+
+    /// A legacy `devices` array names token files the same way an object does.
+    #[test]
+    fn a_devices_array_inventory_names_its_token_file() {
+        assert_loose_token_and_waivers_are_both_named(
+            r#"{"version":1,"devices":[{"name":"pve3","endpoint":"https://pve3.example.org:8006","token_id":"root@pam!mcp","token_secret_file":"{token}"}]}"#,
         );
     }
 
