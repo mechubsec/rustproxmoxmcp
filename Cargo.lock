@@ -2278,6 +2278,7 @@ dependencies = [
  "mecmcp-job",
  "mecmcp-redact",
  "mecmcp-runtime",
+ "mecmcp-secret",
  "mecmcp-server",
  "mecmcp-transport",
  "reqwest",

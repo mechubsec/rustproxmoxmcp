@@ -13,7 +13,27 @@
 //! [`TokenCli`] and the dispatch logic in `main.rs`.
 
 use clap::{Parser, Subcommand};
+use mecmcp_secret::naming::{ServerNaming, known};
 use std::path::PathBuf;
+
+/// Layout for this server. `known::PROXMOX` is the deployed short name, so
+/// the directories stay `/etc/proxmoxmcp` and `/var/lib/proxmoxmcp`.
+#[must_use]
+pub fn server_naming() -> ServerNaming {
+    ServerNaming::derive(known::PROXMOX)
+}
+
+/// Default cluster inventory. Derived from [`server_naming`].
+#[must_use]
+pub fn default_clusters_file() -> PathBuf {
+    server_naming().config_dir.join("clusters.json")
+}
+
+/// Default waiver file. Derived from [`server_naming`].
+#[must_use]
+pub fn default_waivers_file() -> PathBuf {
+    server_naming().config_dir.join("waivers.json")
+}
 
 /// `rust-proxmoxmcp` command line.
 #[derive(Debug, Parser)]
@@ -24,7 +44,7 @@ pub struct ProxmoxCli {
     pub common: mecmcp_runtime::cli::Cli,
 
     /// Cluster inventory. Must be mode 0600 and owned by the service user.
-    #[arg(long, default_value = "/etc/proxmoxmcp/clusters.json")]
+    #[arg(long, default_value_os_t = default_clusters_file())]
     pub clusters_file: PathBuf,
 
     /// Run without two-person control for destructive operations.
@@ -76,7 +96,7 @@ pub struct ProxmoxCli {
     pub state_file: Option<PathBuf>,
 
     /// Time-boxed operator waivers (spec §4.2). Mode 0600, service-owned.
-    #[arg(long = "waivers-file", default_value = "/etc/proxmoxmcp/waivers.json")]
+    #[arg(long = "waivers-file", default_value_os_t = default_waivers_file())]
     pub waivers_file: PathBuf,
 
     /// Enable the `/metrics` (Prometheus) endpoint (streamable-http only). OFF
@@ -493,5 +513,28 @@ mod tests {
         );
         assert_eq!(actions, Some(vec!["read".to_owned(), "low".to_owned()]));
         assert!(yes);
+    }
+
+    /// The shipped paths come from the shared layout and stay the directories
+    /// already on disk.
+    #[test]
+    fn defaults_follow_the_proxmox_layout() {
+        let naming = server_naming();
+        let clusters = default_clusters_file();
+        let waivers = default_waivers_file();
+        let tokens = naming.state_dir.join("tokens.json");
+
+        assert_eq!(clusters, PathBuf::from("/etc/proxmoxmcp/clusters.json"));
+        assert_eq!(waivers, PathBuf::from("/etc/proxmoxmcp/waivers.json"));
+        assert_eq!(tokens, PathBuf::from("/var/lib/proxmoxmcp/tokens.json"));
+        assert_eq!(
+            naming.config_dir.join("tokens.json"),
+            PathBuf::from("/etc/proxmoxmcp/tokens.json")
+        );
+        assert_eq!(naming.service_user, "proxmoxmcp");
+
+        let cli = ProxmoxCli::parse_from(["rust-proxmoxmcp"]);
+        assert_eq!(cli.clusters_file, clusters);
+        assert_eq!(cli.waivers_file, waivers);
     }
 }

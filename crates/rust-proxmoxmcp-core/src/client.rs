@@ -64,6 +64,9 @@ impl ProxmoxClient {
 
         let mut extra_root_certificates = Vec::new();
         if let Some(path) = &cluster.ca_pem_path {
+            // Public trust material. Operators ship this bundle at 0644.
+            // `read_hardened_file` rejects every group and other bit, so this
+            // stays a plain read and the startup credential pass omits the path.
             let pem = std::fs::read_to_string(path).map_err(|error| {
                 ProxmoxError::Config(format!("ca_pem_path {}: {error}", path.display()))
             })?;
