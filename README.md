@@ -112,6 +112,10 @@ outside the tool call: **there is deliberately no `grant_waiver` tool and no
     `op` argument passed to that call (`destroy_guest`, `delete_snapshot`,
     `rollback_snapshot`, `delete_backup`, `delete_iso`, `restore_backup`,
     `migrate`, `update_vm_config`).
+  - A restore that targets a *new* VMID (`restore_backup_new_vmid`): the
+    fixed string `restore_new_vmid`, naming the archive owner guest the
+    waiver protects, not the new VMID.
+
   - A service-interrupting `low`-tier tool (for example `stop_vm`,
     `stop_container`, `reboot_vm`): the tool's own name.
   - An HA rule change planned through `plan_ha_rule_change`: `ha_rule_`
