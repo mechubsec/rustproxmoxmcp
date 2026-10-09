@@ -14,7 +14,7 @@
 
 ---
 
-## Status: 0.11.0 — the tool surface is complete but for two gaps
+## Status: 0.11.0 — the tool surface is complete but for one gap
 
 **50 callable tools**: 31 read, 18 `low`, and `apply_proxmox_change_set` as the
 single `destructive` entry point. Seven further names --- `delete_vm`,
@@ -29,13 +29,8 @@ tools**: a token grants them by name and reaches them through
   `mecmcp-policy` compiling an allow/deny rule set over the command subject, and
   that is not wired. Arbitrary command execution inside every guest is remote
   code execution as a tool call; it ships with a policy engine or not at all.
-- **Restore to a *new* VMID.** `restore_backup` exists but is not equivalent to
-  the third-party server's: the plan resolves an **existing** guest and the
-  apply passes `force=true`, so a same-shaped call overwrites rather than
-  creates. This is the gap most likely to be missed, because the tool exists and
-  the call succeeds.
 
-Both are tracked in #57. Everything else the third-party `proxmox-mcp` offers
+The remaining gap is tracked in #57. Everything else the third-party `proxmox-mcp` offers
 has an equivalent here --- see `docs/MIGRATING-FROM-PROXMOX-MCP.md`, which also
 lists the arguments that changed shape.
 
@@ -125,10 +120,6 @@ outside the tool call: **there is deliberately no `grant_waiver` tool and no
   - A firewall change planned through `plan_firewall_change`: `firewall_`
     followed by the object and the operation (`firewall_rule_create`,
     `firewall_options_update`, `firewall_ipset_entry_delete`).
-  - A restore that targets a *new* VMID (`restore_backup_new_vmid`): the
-    fixed string `restore_new_vmid`, naming the archive owner guest the
-    waiver protects, not the new VMID.
-
   A waiver that misspells or omits the operation it was meant for matches
   nothing -- the call is refused the same as if no waiver existed.
 

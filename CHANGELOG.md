@@ -604,9 +604,7 @@ function, which by strict semver would be a minor bump.
   - Options that silently vanished with a same-named tool are now listed:
     `graceful` on stop, `vmstate` on snapshot, clone placement.
   - Every parity gap is now named in the guide, with a plain instruction not
-    to cut over until #57 closes -- including `restore_backup`, whose target
-    semantics are the **opposite** of the incumbent's: it overwrites an
-    existing guest with `force=true` rather than restoring to a new VMID.
+    to cut over until #57 closes.
   - `shutdown_vm` is QEMU-only, so containers have no graceful stop at all;
     the guide said otherwise.
   - `clone_vm` silently ignores `snapname`, cloning current state rather than
