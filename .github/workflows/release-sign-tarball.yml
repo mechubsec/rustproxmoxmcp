@@ -4,9 +4,9 @@ name: Sign release tarball
 # release pipeline. Before this workflow, GitHub releases shipped no
 # tarball at all -- the image was the only published artifact, but
 # packaging/lxc/install.sh requires an extracted tarball with
-# bin/rust-proxmoxmcp, so systemd/LXC installs had nothing to install from.
-# Mirrors rustunifimcp's release-sign-tarball.yml, itself extracted from
-# rustjunosmcp's -- see mecmcp's docs/RELEASE-WORKFLOWS.md.
+# ./rust-proxmoxmcp at its root, so systemd/LXC installs had nothing to
+# install from. Mirrors rustsdcmcp's release-sign-tarball.yml, itself
+# extracted from rustjunosmcp's -- see mecmcp's docs/RELEASE-WORKFLOWS.md.
 #
 # Jobs trigger on `release: published`, not the tag push itself -- the
 # release does not exist yet at tag-push time. A release is only published
@@ -17,10 +17,13 @@ name: Sign release tarball
 # already-published release whose own `release: published` run did not
 # attach them. The `tag` input must name an existing GitHub-verified signed
 # tag that already has a published (non-draft) release; the workflow checks
-# that before building and refuses anything else. A dispatch is also
-# refused when that release already has a tarball signature bundle, so a
-# backfill cannot replace signed release assets. Agents cannot dispatch;
-# the board runs `gh workflow run release-sign-tarball.yml -f tag=vX.Y.Z`.
+# that before building and refuses anything else. Every run -- `release:
+# published` or `workflow_dispatch` alike -- also refuses when that release
+# already has a tarball signature bundle, so neither a backfill nor a
+# re-run of an already-signed release can replace signed release assets. A
+# release that has the tarball but no bundle can still be backfilled.
+# Agents cannot dispatch; the board runs
+# `gh workflow run release-sign-tarball.yml -f tag=vX.Y.Z`.
 on:
   release:
     types: [published]
@@ -31,6 +34,13 @@ on:
         required: true
         type: string
 
+# Serializes runs per tag so a board backfill dispatched while the
+# release's own `release: published` run is still in flight can't race it
+# past the bundle-exists guard and both end up building/signing at once.
+concurrency:
+  group: release-sign-tarball-${{ github.event.inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
   resolve-tag:
     name: Verify signed published tag
@@ -40,6 +50,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.verify.outputs.tag }}
+      sha: ${{ steps.verify.outputs.sha }}
     steps:
       - name: Verify tag is annotated, GitHub-verified, and published
         id: verify
@@ -67,6 +78,11 @@ jobs:
             echo "::error::$TAG is not a GitHub-verified signature (reason: $reason). Sign it with a GPG or SSH key registered to your GitHub account: git tag -s $TAG -m '...' && git push origin $TAG."
             exit 1
           fi
+          # Peel the verified annotated tag object to the commit it signs,
+          # so the build step checks out that exact commit by SHA instead of
+          # by tag name -- closing the window between this verification and
+          # the checkout in which the tag could otherwise move.
+          commit_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq '.object.sha')
           # One release read. An API error must fail the job, not look like a
           # missing asset.
           release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}") || {
@@ -81,20 +97,24 @@ jobs:
             echo "::error::$TAG has a draft release; backfill and sign only run against a published release."
             exit 1
           fi
-          # Dispatch refuses when a tarball signature bundle is already
-          # attached. A tarball without a bundle can still be backfilled.
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            if ! bundle_count=$(jq -r '[.assets[].name | select(endswith(".tar.gz.cosign.bundle"))] | length' <<<"$release_json"); then
-              echo "::error::could not read release assets for $TAG."
-              exit 1
-            fi
-            if [[ "$bundle_count" != "0" ]]; then
-              echo "::error::$TAG already has a signed tarball; backfill does not replace signed release assets."
-              exit 1
-            fi
+          # Refuse whenever a tarball signature bundle is already attached --
+          # on a fresh publish there is none, so this always passes a first
+          # run. A re-run of the release: published workflow after it already
+          # signed the release would otherwise rebuild a non-reproducible
+          # tarball, clobber the asset and checksum, and leave the old
+          # .cosign.bundle behind, which no longer verifies against the new
+          # bytes. A tarball without a bundle can still be backfilled.
+          if ! bundle_count=$(jq -r '[.assets[].name | select(endswith(".tar.gz.cosign.bundle"))] | length' <<<"$release_json"); then
+            echo "::error::could not read release assets for $TAG."
+            exit 1
+          fi
+          if [[ "$bundle_count" != "0" ]]; then
+            echo "::error::$TAG already has a signed tarball; this workflow does not replace signed release assets."
+            exit 1
           fi
           echo "$TAG: annotated, GitHub-verified, published"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$commit_sha" >> "$GITHUB_OUTPUT"
 
   build-tarball:
     name: Build release tarball
@@ -104,18 +124,27 @@ jobs:
       contents: read
     timeout-minutes: 20
     steps:
-      - name: Check out tag
+      - name: Check out verified commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve-tag.outputs.tag }}
+          ref: ${{ needs.resolve-tag.outputs.sha }}
+
+      - id: source
+        name: Record exact source commit
+        env:
+          EXPECTED_SHA: ${{ needs.resolve-tag.outputs.sha }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          if [[ "$sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::checked out $sha but resolve-tag verified $EXPECTED_SHA."
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: 1.98.0
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+          toolchain: 1.99.0
 
       - name: Build release archive
         run: ./scripts/package-lxc.sh
