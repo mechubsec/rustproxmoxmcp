@@ -123,6 +123,7 @@ outside the tool call: **there is deliberately no `grant_waiver` tool and no
   - A firewall change planned through `plan_firewall_change`: `firewall_`
     followed by the object and the operation (`firewall_rule_create`,
     `firewall_options_update`, `firewall_ipset_entry_delete`).
+
   A waiver that misspells or omits the operation it was meant for matches
   nothing -- the call is refused the same as if no waiver existed.
 
