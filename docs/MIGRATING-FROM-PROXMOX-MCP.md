@@ -71,6 +71,7 @@ node is how a request addresses the wrong guest after a migration.
 | `delete_backup` | `op: "delete_backup"`, `storage` + `volid` + `storage_node` |
 | `delete_iso` | `op: "delete_iso"`, `storage` + `volid` + `storage_node` |
 | `restore_backup` | `op: "restore_backup"`, `volid` |
+| `restore_backup` to a new VMID | `plan_restore_new_vmid` → `approve_proxmox_change_set` → `apply_restore_new_vmid`, with scope `restore_backup_new_vmid` |
 
 Then `approve_proxmox_change_set` and `apply_proxmox_change_set`.
 
@@ -96,12 +97,11 @@ need in the token scope, not just the two handlers.
 | `poll_job` | applies follow their UPID to completion within the call; a crashed apply is re-probed at startup |
 | `retry_job` | **none.** A failed apply needs a fresh plan — the change set is terminal, and retrying one whose receipt is already written would carry an empty digest and principal |
 | `execute_vm_command` | **none.** Deliberate: the design spec makes it conditional on `mecmcp-policy` compiling an allow/deny rule set over the command subject, which is not wired. Arbitrary command execution inside every guest is remote code execution as a tool call, and it ships with a policy engine or not at all. Tracked in #57 |
-| `restore_backup` to a new VMID | **none.** The mapping above resolves an **existing** guest and applies with `force=true`, so it overwrites rather than creates. See the semantics note below — this is the gap most likely to be missed, because the tool exists and the call succeeds |
-
-Two genuine gaps, and a caller that depends on either has to change rather than
-be shimmed. **You can cut over for everything else as of 0.8.0** — but read the
-`restore_backup` note first, because that one does not fail loudly. It does the
-wrong thing successfully.
+One genuine gap remains, and a caller that depends on it has to change rather
+than be shimmed. **You can cut over for everything else as of 0.8.0** — but
+read the `restore_backup` note first, because plain restore does not fail
+loudly when given the incumbent's new-VMID semantics: it does the wrong thing
+successfully.
 
 ### Here but not there
 
@@ -118,7 +118,8 @@ wrong thing successfully.
 2. **Scope the destructive *operations*, not just the three change-set tools.**
    Plan and apply authorise a second time against the selected operation's own
    name -- `delete_vm`, `delete_container`, `delete_snapshot`,
-   `rollback_snapshot`, `delete_backup`, `delete_iso`, `restore_backup`. A
+   `rollback_snapshot`, `delete_backup`, `delete_iso`, `restore_backup`,
+   `restore_backup_new_vmid`. A
    token holding only `plan_proxmox_destroy`, `approve_proxmox_change_set` and
    `apply_proxmox_change_set` is refused at plan time. These names are
    authorisation scopes, not callable tools: there is no `delete_vm` tool.
@@ -162,11 +163,13 @@ either fails to parse or silently does something else:
 `target_vmid` are `vmid` and `newid` here.
 
 `restore_backup` has **opposite target semantics**. The third-party tool treats
-`vmid` as a *new* restore target and exposes `storage` and `unique`; here the
-plan resolves an **existing** guest by that VMID and the apply always passes
-`force=true`, overwriting it. Restore-to-a-new-VMID is not available, and a
-caller expecting the incumbent's behaviour would overwrite a live guest instead
-of creating one.
+the `vmid` as a *new* restore target and exposes `storage` and `unique`; here the
+plain restore path resolves an **existing** guest by that VMID and the apply
+always passes `force=true`, overwriting it. Use the separate
+`plan_restore_new_vmid` → `approve_proxmox_change_set` → `apply_restore_new_vmid`
+flow for a new VMID; its token scope is `restore_backup_new_vmid`. A caller
+expecting the incumbent's behaviour from plain `restore_backup` would overwrite
+a live guest instead of creating one.
 
 ## Two behaviours that will surprise a 970 caller
 
