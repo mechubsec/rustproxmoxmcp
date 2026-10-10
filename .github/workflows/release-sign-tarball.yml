@@ -134,6 +134,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve-tag.outputs.sha }}
+          # This job only reads the checkout to build a tarball (permissions:
+          # contents: read above already denies any push), but drop the
+          # local git credential too so nothing this build step runs can use
+          # it, closing the credential-based half of GHAS's untrusted-
+          # checkout finding on this job.
+          persist-credentials: false
 
       - id: source
         name: Record exact source commit
