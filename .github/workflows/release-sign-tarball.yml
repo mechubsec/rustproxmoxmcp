@@ -120,6 +120,12 @@ jobs:
     name: Build release tarball
     needs: resolve-tag
     runs-on: ubuntu-24.04
+    # Gates the build (which runs code from the verified commit) behind a
+    # deployment environment, so CodeQL's cache-poisoning-via-untrusted-
+    # checkout check records an explicit control boundary here -- the same
+    # boundary the board can later harden with required reviewers in repo
+    # settings without a workflow change.
+    environment: release-tarball-build
     permissions:
       contents: read
     timeout-minutes: 20
