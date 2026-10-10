@@ -1,0 +1,174 @@
+name: Sign release tarball
+
+# Wires scripts/package-lxc.sh's LXC/systemd tarball into the signed
+# release pipeline. Before this workflow, GitHub releases shipped no
+# tarball at all -- the image was the only published artifact, but
+# packaging/lxc/install.sh requires an extracted tarball with
+# bin/rust-proxmoxmcp, so systemd/LXC installs had nothing to install from.
+# Mirrors rustunifimcp's release-sign-tarball.yml, itself extracted from
+# rustjunosmcp's -- see mecmcp's docs/RELEASE-WORKFLOWS.md.
+#
+# Jobs trigger on `release: published`, not the tag push itself -- the
+# release does not exist yet at tag-push time. A release is only published
+# by the board user, so this never fires from a PR, a branch push, or an
+# unreviewed tag.
+#
+# `workflow_dispatch` backfills the tarball, checksum, and signature onto an
+# already-published release whose own `release: published` run did not
+# attach them. The `tag` input must name an existing GitHub-verified signed
+# tag that already has a published (non-draft) release; the workflow checks
+# that before building and refuses anything else. A dispatch is also
+# refused when that release already has a tarball signature bundle, so a
+# backfill cannot replace signed release assets. Agents cannot dispatch;
+# the board runs `gh workflow run release-sign-tarball.yml -f tag=vX.Y.Z`.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing GitHub-verified signed tag with a published release to backfill, e.g. v0.11.1'
+        required: true
+        type: string
+
+jobs:
+  resolve-tag:
+    name: Verify signed published tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+    steps:
+      - name: Verify tag is annotated, GitHub-verified, and published
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must be vMAJOR.MINOR.PATCH, got '$TAG'."
+            exit 1
+          fi
+          if ! object_type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type'); then
+            echo "::error::$TAG is not a tag in ${GITHUB_REPOSITORY}."
+            exit 1
+          fi
+          if [[ "$object_type" != "tag" ]]; then
+            echo "::error::$TAG is a lightweight tag ($object_type object) -- release tags must be annotated and signed (git tag -s $TAG)."
+            exit 1
+          fi
+          tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          verified=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq '.verification.verified')
+          if [[ "$verified" != "true" ]]; then
+            reason=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq '.verification.reason')
+            echo "::error::$TAG is not a GitHub-verified signature (reason: $reason). Sign it with a GPG or SSH key registered to your GitHub account: git tag -s $TAG -m '...' && git push origin $TAG."
+            exit 1
+          fi
+          # One release read. An API error must fail the job, not look like a
+          # missing asset.
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}") || {
+            echo "::error::$TAG has no GitHub release."
+            exit 1
+          }
+          if ! draft=$(jq -r '.draft' <<<"$release_json"); then
+            echo "::error::could not read the release for $TAG."
+            exit 1
+          fi
+          if [[ "$draft" != "false" ]]; then
+            echo "::error::$TAG has a draft release; backfill and sign only run against a published release."
+            exit 1
+          fi
+          # Dispatch refuses when a tarball signature bundle is already
+          # attached. A tarball without a bundle can still be backfilled.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if ! bundle_count=$(jq -r '[.assets[].name | select(endswith(".tar.gz.cosign.bundle"))] | length' <<<"$release_json"); then
+              echo "::error::could not read release assets for $TAG."
+              exit 1
+            fi
+            if [[ "$bundle_count" != "0" ]]; then
+              echo "::error::$TAG already has a signed tarball; backfill does not replace signed release assets."
+              exit 1
+            fi
+          fi
+          echo "$TAG: annotated, GitHub-verified, published"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  build-tarball:
+    name: Build release tarball
+    needs: resolve-tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-tag.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Build release archive
+        run: ./scripts/package-lxc.sh
+
+      - name: Smoke release binary
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/rustproxmoxmcp-rc"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/rustproxmoxmcp-rc"
+          "$RUNNER_TEMP"/rustproxmoxmcp-rc/*/rust-proxmoxmcp --version
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-tarball
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          retention-days: 1
+          if-no-files-found: error
+
+  upload-tarball:
+    name: Attach tarball to release
+    needs: [resolve-tag, build-tarball]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # gh release upload
+    timeout-minutes: 10
+    steps:
+      - name: Download tarball artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-tarball
+          path: dist
+
+      - name: Upload tarball to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+        # --clobber: a re-run after a partial failure must be able to
+        # re-upload without deleting the assets by hand first.
+        run: gh release upload "$TAG" dist/*.tar.gz dist/*.tar.gz.sha256 --repo "${{ github.repository }}" --clobber
+
+  sign:
+    needs: [resolve-tag, upload-tarball]
+    permissions:
+      contents: write
+      # Keyless cosign signing exchanges this job's OIDC token for a
+      # short-lived Fulcio certificate; no key material is stored anywhere.
+      # A reusable workflow's permissions can only be narrowed by the
+      # caller, never widened, so this job must grant them itself -- see
+      # mecmcp's docs/RELEASE-WORKFLOWS.md.
+      id-token: write
+    uses: mechubsec/mecmcp/.github/workflows/reusable-sign-release-tarball.yml@19401120439cd1420701bb59b6495bfdd3718b93 # v0.27.0
+    with:
+      tag: ${{ needs.resolve-tag.outputs.tag }}
