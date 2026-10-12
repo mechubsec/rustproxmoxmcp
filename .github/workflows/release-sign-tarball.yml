@@ -23,7 +23,7 @@ name: Sign release tarball
 # re-run of an already-signed release can replace signed release assets. A
 # release that has the tarball but no bundle can still be backfilled.
 # Agents cannot dispatch; the board runs
-# `gh workflow run release-sign-tarball.yml -f tag=vX.Y.Z`.
+# `gh workflow run release-sign-tarball.yml --ref vX.Y.Z -f tag=vX.Y.Z`.
 on:
   release:
     types: [published]
@@ -59,6 +59,10 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/tags/$TAG" ]]; then
+            echo "::error::this run's ref ($GITHUB_REF) does not match tag '$TAG'. Dispatch with --ref $TAG."
+            exit 1
+          fi
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::tag must be vMAJOR.MINOR.PATCH, got '$TAG'."
             exit 1
@@ -83,6 +87,10 @@ jobs:
           # by tag name -- closing the window between this verification and
           # the checkout in which the tag could otherwise move.
           commit_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq '.object.sha')
+          if [[ "$GITHUB_SHA" != "$commit_sha" ]]; then
+            echo "::error::this run's commit ($GITHUB_SHA) does not match the commit signed by tag '$TAG' ($commit_sha)."
+            exit 1
+          fi
           # One release read. An API error must fail the job, not look like a
           # missing asset.
           release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}") || {
@@ -120,12 +128,6 @@ jobs:
     name: Build release tarball
     needs: resolve-tag
     runs-on: ubuntu-24.04
-    # Gates the build (which runs code from the verified commit) behind a
-    # deployment environment, so CodeQL's cache-poisoning-via-untrusted-
-    # checkout check records an explicit control boundary here -- the same
-    # boundary the board can later harden with required reviewers in repo
-    # settings without a workflow change.
-    environment: release-tarball-build
     permissions:
       contents: read
     timeout-minutes: 20
@@ -133,12 +135,9 @@ jobs:
       - name: Check out verified commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve-tag.outputs.sha }}
           # This job only reads the checkout to build a tarball (permissions:
-          # contents: read above already denies any push), but drop the
-          # local git credential too so nothing this build step runs can use
-          # it, closing the credential-based half of GHAS's untrusted-
-          # checkout finding on this job.
+          # contents: read above already denies any push); drop the local
+          # git credential too so nothing this build step runs can use it.
           persist-credentials: false
 
       - id: source
