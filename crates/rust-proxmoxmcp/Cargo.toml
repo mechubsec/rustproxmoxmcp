@@ -56,6 +56,8 @@ mecmcp-redact    = { workspace = true, features = ["test-util"] }
 # behind this feature and dropped their `ureq` dependency from the normal
 # (non-test-util) dependency graph.
 mecmcp-transport = { workspace = true, features = ["test-util"] }
+# Test-only: the shared CLI refusal fixtures live behind `test-util`.
+mecmcp-runtime   = { workspace = true, features = ["test-util"] }
 reqwest          = { version = "0.13", features = ["json"] }
 rust-proxmoxmcp-core = { workspace = true, features = ["testing"] }
 serde_json       = { workspace = true }

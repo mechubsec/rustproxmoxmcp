@@ -441,8 +441,7 @@ async fn main() -> Result<()> {
     );
     let mut args = parsed.cli;
 
-    mecmcp_runtime::cli_validate::validate(&args.common)
-        .map_err(|refusal| anyhow::anyhow!("{refusal}"))?;
+    mecmcp_runtime::cli_validate::validate_or_exit(&args.common);
 
     let audit_sink = init_audit(&args.common)?;
 
