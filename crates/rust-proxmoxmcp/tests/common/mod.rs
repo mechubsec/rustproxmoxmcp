@@ -365,6 +365,7 @@ impl TestServer {
             None,
             None,
             None,
+            None,
             &known,
         )
         .expect("mint token");
@@ -384,6 +385,7 @@ impl TestServer {
             None,
             None,
             Some(mecmcp_auth::ActorType::Human),
+            None,
             &known,
         )
         .expect("mint second token");
@@ -401,6 +403,7 @@ impl TestServer {
             None,
             None,
             Some(mecmcp_auth::ActorType::Agent),
+            None,
             &known,
         )
         .expect("mint agent-actor-type token");
@@ -430,6 +433,7 @@ impl TestServer {
             // token exists to prove, not for an unrelated non-human actor
             // type that would mask it.
             Some(mecmcp_auth::ActorType::Human),
+            None,
             &known,
         )
         .expect("mint narrow-scoped token");
@@ -452,6 +456,7 @@ impl TestServer {
             None,
             // Human, for the same reason as `narrow_token` above.
             Some(mecmcp_auth::ActorType::Human),
+            None,
             &known,
         )
         .expect("mint low-tier token");
@@ -481,6 +486,7 @@ impl TestServer {
             // Human: this token stands in for a second, distinct approver in
             // the tests that use it.
             Some(mecmcp_auth::ActorType::Human),
+            None,
             &known,
         )
         .expect("mint mid-range token");

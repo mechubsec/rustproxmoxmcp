@@ -147,7 +147,19 @@ fn mcp_session(port: u16, token: &str) -> (McpClient, String) {
     let client = McpClient::new(format!("http://127.0.0.1:{port}"))
         .unwrap()
         .with_bearer(token);
-    let session_id = client.initialize().expect("initialize");
+    // The listener can accept a probe connection before the server is ready to
+    // serve requests, so retry briefly on a transient transport error.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let session_id = loop {
+        match client.initialize() {
+            Ok(id) => break id,
+            Err(e) if Instant::now() < deadline => {
+                let _ = e;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => panic!("initialize: {e:?}"),
+        }
+    };
     (client, session_id)
 }
 

@@ -22,6 +22,32 @@ use std::time::Duration;
 /// unattributed caller would let stdio silently satisfy the human-approver
 /// gate; `Unknown` is the honest fact, and `approve_change_set` refuses it
 /// exactly like it refuses `Agent`.
+pub(crate) fn approver_identity(
+    caller: Option<&mecmcp_auth::CallerCtx<ProxmoxGrant>>,
+) -> mecmcp_changeset::ApproverIdentity {
+    // No verified-approver assertion path is wired into this server, so the
+    // identity is always token-asserted; strict mode cannot be satisfied.
+    mecmcp_changeset::ApproverIdentity::TokenAsserted {
+        principal: caller
+            .map(|ctx| ctx.token_name.clone())
+            .unwrap_or_else(|| "stdio".to_owned()),
+        actor_type: actor_type(caller),
+    }
+}
+
+/// The caller token's bound IdP identity, recorded on the change set so the
+/// coordinator can refuse the same human approving their own plan.
+pub(crate) fn owner_subject(
+    caller: Option<&mecmcp_auth::CallerCtx<ProxmoxGrant>>,
+) -> Option<mecmcp_changeset::OwnerSubject> {
+    caller
+        .and_then(|ctx| ctx.oidc_subject.as_ref())
+        .map(|s| mecmcp_changeset::OwnerSubject {
+            issuer: s.issuer.clone(),
+            subject: s.subject.clone(),
+        })
+}
+
 pub(crate) fn actor_type(
     caller: Option<&mecmcp_auth::CallerCtx<ProxmoxGrant>>,
 ) -> mecmcp_audit::ActorType {
@@ -224,7 +250,7 @@ mod tests {
     /// A key passed through `build_coordinator` must produce the keyed v6
     /// approval digest.
     #[tokio::test]
-    async fn an_approval_digest_key_passed_to_build_coordinator_produces_a_v6_digest() {
+    async fn an_approval_digest_key_passed_to_build_coordinator_produces_a_keyed_digest() {
         let dir = tempfile::tempdir().expect("tempdir");
         let state_path = dir.path().join("changeset-state.json");
         let key = b"a-sufficiently-long-test-key".as_slice();
@@ -245,6 +271,7 @@ mod tests {
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000"
                     .to_string(),
                 "policy-sig".to_string(),
+                None,
             )
             .await
             .expect("create");
@@ -252,9 +279,11 @@ mod tests {
             .approve_change_set(
                 created.change_set_id.clone(),
                 "cluster-a/vm-100".to_string(),
-                "bob".to_string(),
+                &mecmcp_changeset::ApproverIdentity::TokenAsserted {
+                    principal: "bob".to_string(),
+                    actor_type: mecmcp_audit::ActorType::Human,
+                },
                 created.digest.clone(),
-                mecmcp_audit::ActorType::Human,
             )
             .await
             .expect("approve");
@@ -270,9 +299,9 @@ mod tests {
             .as_ref()
             .expect("approval");
         assert_eq!(
-            approval.digest_version, 6,
-            "a key passed through build_coordinator must produce a v6 (keyed) digest, \
-             not the unkeyed v5 one"
+            approval.digest_version, 7,
+            "a key passed through build_coordinator must produce a v7 (keyed, \
+             approver-mechanism-bound) digest, not an unkeyed one"
         );
 
         drop(coordinator);

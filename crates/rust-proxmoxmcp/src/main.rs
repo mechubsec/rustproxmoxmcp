@@ -331,6 +331,8 @@ fn token_command_to_action(command: TokenCommand) -> Result<(TokenAction, Option
                 provider_tier,
                 on_behalf_of,
                 actor_type,
+                oidc_issuer: None,
+                oidc_subject: None,
                 server_pid,
             };
             Ok((action, grant))

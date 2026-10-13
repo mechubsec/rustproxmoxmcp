@@ -183,6 +183,8 @@ pub(crate) struct PreparedFirewallPlan {
     pub device: String,
     /// Planner's token name.
     pub owner: String,
+    /// Planner token's bound IdP identity, if any.
+    pub owner_subject: Option<mecmcp_changeset::OwnerSubject>,
     /// Whether lab mode should approve this plan without a second principal.
     pub waive_for_lab_mode: bool,
 }
