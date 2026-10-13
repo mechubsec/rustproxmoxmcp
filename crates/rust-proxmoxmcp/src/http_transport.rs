@@ -252,6 +252,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &known,
         )
         .expect("token add");

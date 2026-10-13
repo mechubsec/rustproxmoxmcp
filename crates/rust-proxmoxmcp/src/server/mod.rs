@@ -5054,6 +5054,7 @@ impl ProxmoxServer {
                 owner.clone(),
                 expected_fingerprint.clone(),
                 policy_signature.to_owned(),
+                change_set::owner_subject(caller.as_ref()),
             )
             .await
         {
@@ -5334,16 +5335,12 @@ impl ProxmoxServer {
             Err(error) => return *error,
         };
 
-        let approver = caller
-            .as_ref()
-            .map(|ctx| ctx.token_name.clone())
-            .unwrap_or_else(|| "stdio".to_owned());
+        let approver = change_set::approver_identity(caller.as_ref());
         // Truthful, not permissive: a stdio caller carries no verified token
         // entry, so its actor type is unknown rather than assumed human. mecmcp's
         // `approve_change_set` refuses anything but `Human` (the house rule that
         // a human approves), which is exactly the outcome an unattributed caller
         // should get.
-        let approver_actor_type = change_set::actor_type(caller.as_ref());
 
         let coordinator = self.coordinator.clone();
 
@@ -5520,9 +5517,8 @@ impl ProxmoxServer {
             .approve_change_set(
                 args.change_set_id.clone(),
                 device.clone(),
-                approver,
+                &approver,
                 record.digest.clone(),
-                approver_actor_type,
             )
             .await
         {
@@ -6317,6 +6313,7 @@ impl ProxmoxServer {
                 owner,
                 expected_fingerprint.clone(),
                 policy_signature.to_owned(),
+                change_set::owner_subject(caller.as_ref()),
             )
             .await
         {
@@ -6465,13 +6462,9 @@ impl ProxmoxServer {
             return authz_tool_error(error);
         }
 
-        let approver = caller
-            .as_ref()
-            .map(|ctx| ctx.token_name.clone())
-            .unwrap_or_else(|| "stdio".to_owned());
+        let approver = change_set::approver_identity(caller.as_ref());
         // Same as `approve_change_set`: the actor type comes from the caller's
         // verified token entry, and anything but `Human` is refused by mecmcp.
-        let approver_actor_type = change_set::actor_type(caller.as_ref());
 
         let coordinator = self.coordinator.clone();
         let device = ha_change_set::ha_rule_device(&args.cluster, &args.rule);
@@ -6491,9 +6484,8 @@ impl ProxmoxServer {
             .approve_change_set(
                 args.change_set_id.clone(),
                 device,
-                approver,
+                &approver,
                 record.digest.clone(),
-                approver_actor_type,
             )
             .await
         {
@@ -6994,6 +6986,7 @@ impl ProxmoxServer {
                 owner,
                 expected_fingerprint.clone(),
                 policy_signature.to_owned(),
+                change_set::owner_subject(caller.as_ref()),
             )
             .await
         {
@@ -7637,19 +7630,14 @@ impl ProxmoxServer {
         {
             return authz_tool_error(error);
         }
-        let approver = caller
-            .as_ref()
-            .map(|ctx| ctx.token_name.clone())
-            .unwrap_or_else(|| "stdio".to_owned());
-        let approver_actor_type = change_set::actor_type(caller.as_ref());
+        let approver = change_set::approver_identity(caller.as_ref());
         let output = match self
             .coordinator
             .approve_change_set(
                 args.change_set_id.clone(),
                 device,
-                approver,
+                &approver,
                 record.digest.clone(),
-                approver_actor_type,
             )
             .await
         {
@@ -7966,12 +7954,14 @@ impl ProxmoxServer {
         let owner = caller
             .map(|ctx| ctx.token_name.clone())
             .unwrap_or_else(|| "stdio".to_owned());
+        let owner_subject = change_set::owner_subject(caller);
         Ok(PreparedFirewallPlan {
             action,
             fingerprint,
             preview,
             device,
             owner,
+            owner_subject,
             waive_for_lab_mode: matches!(override_, Override::LabMode),
         })
     }
@@ -7990,6 +7980,7 @@ impl ProxmoxServer {
                 prepared.owner.clone(),
                 prepared.fingerprint.clone(),
                 "proxmox-no-policy-engine".to_owned(),
+                prepared.owner_subject.clone(),
             )
             .await
         {
@@ -8554,6 +8545,8 @@ mod tests {
             model_id: None,
             session_id: None,
             request_id: uuid::Uuid::new_v4(),
+            oidc_subject: None,
+            verified_approver: None,
         };
 
         let result = resolve_grant(Some(&grantless_caller));
