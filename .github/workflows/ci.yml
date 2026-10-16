@@ -33,6 +33,11 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Installer shell checks
+        run: |
+          shellcheck packaging/lxc/install.sh packaging/lxc/tests/test_installer_path_guard.sh
+          sh packaging/lxc/tests/test_installer_path_guard.sh
+
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
