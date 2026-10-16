@@ -7,6 +7,47 @@ die() {
     exit 1
 }
 
+SERVICE_USER=proxmoxmcp
+SERVICE_GROUP=proxmoxmcp
+
+# Refuse any existing path that is not a plain file. Called immediately before
+# every create/chmod/chown of a root-written file.
+require_regular_file() {
+    if [ -L "$1" ] || { [ -e "$1" ] && [ ! -f "$1" ]; }; then
+        die "$1 is not a regular file; refusing"
+    fi
+}
+
+# Create a file from a generator command (which writes to stdout) if absent.
+# Content goes to a private temp file and is placed with install(1), which
+# replaces rather than follows whatever sits at the destination.
+install_generated_file() {
+    mode=$1
+    target=$2
+    shift 2
+    require_regular_file "$target"
+    if [ ! -e "$target" ]; then
+        gen_tmp=$(mktemp) || die "mktemp failed"
+        if ! "$@" > "$gen_tmp"; then
+            rm -f "$gen_tmp"
+            die "failed to generate $target"
+        fi
+        if ! install -m "$mode" -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$gen_tmp" "$target"; then
+            rm -f "$gen_tmp"
+            die "failed to install $target"
+        fi
+        rm -f "$gen_tmp"
+    fi
+}
+
+empty_token_store() {
+    printf '{"version":1,"tokens":[]}\n'
+}
+
+random_key_32() {
+    head -c 32 /dev/urandom
+}
+
 # Prove whether systemd's IPAddress* filters actually attach here, rather than
 # assuming the unit's declaration means anything. systemd implements them with
 # cgroup eBPF and FAILS OPEN when it cannot load the program -- typical in an
@@ -150,7 +191,8 @@ install -m 0755 -o root -g root rust-proxmoxmcp /usr/local/bin/rust-proxmoxmcp
 # /etc/proxmoxmcp and secrets directory already created by tmpfiles
 
 # Install example config files only if absent
-if [ ! -f /etc/proxmoxmcp/clusters.json ]; then
+require_regular_file /etc/proxmoxmcp/clusters.json
+if [ ! -e /etc/proxmoxmcp/clusters.json ]; then
     echo "    Installing example clusters.json..."
     if [ -f packaging/examples/clusters.example.json ]; then
         install -m 0600 -o proxmoxmcp -g proxmoxmcp packaging/examples/clusters.example.json /etc/proxmoxmcp/clusters.json
@@ -170,6 +212,7 @@ fi
 #
 # The file is never copied automatically — that would leave a duplicate secret
 # behind, which is what the stale-secret scan exists to flag.
+require_regular_file /var/lib/proxmoxmcp/tokens.json
 if [ ! -e /var/lib/proxmoxmcp/tokens.json ]; then
     if [ -e /etc/proxmoxmcp/tokens.json ]; then
         printf '%s\n' ">> Not creating /var/lib/proxmoxmcp/tokens.json: a token store already exists at"
@@ -178,9 +221,7 @@ if [ ! -e /var/lib/proxmoxmcp/tokens.json ]; then
         printf '%s\n' ">>   install -m 0600 -o proxmoxmcp -g proxmoxmcp /etc/proxmoxmcp/tokens.json /var/lib/proxmoxmcp/tokens.json"
         printf '%s\n' ">>   rm /etc/proxmoxmcp/tokens.json"
     else
-        printf '{"version":1,"tokens":[]}\n' > /var/lib/proxmoxmcp/tokens.json
-        chown proxmoxmcp:proxmoxmcp /var/lib/proxmoxmcp/tokens.json
-        chmod 0600 /var/lib/proxmoxmcp/tokens.json
+        install_generated_file 0600 /var/lib/proxmoxmcp/tokens.json empty_token_store
     fi
 else
     echo "    /var/lib/proxmoxmcp/tokens.json exists; not overwriting"
@@ -188,12 +229,10 @@ fi
 
 # Generate audit HMAC key if absent. Never regenerate — a new key breaks
 # verification of every prior audit record.
-if [ ! -f /etc/proxmoxmcp/audit-hmac.key ]; then
+require_regular_file /etc/proxmoxmcp/audit-hmac.key
+if [ ! -e /etc/proxmoxmcp/audit-hmac.key ]; then
     echo "    Generating audit HMAC key..."
-    umask 077
-    head -c 32 /dev/urandom > /etc/proxmoxmcp/audit-hmac.key
-    chown proxmoxmcp:proxmoxmcp /etc/proxmoxmcp/audit-hmac.key
-    chmod 0600 /etc/proxmoxmcp/audit-hmac.key
+    install_generated_file 0600 /etc/proxmoxmcp/audit-hmac.key random_key_32
 else
     echo "    /etc/proxmoxmcp/audit-hmac.key exists; preserving (never regenerate)"
 fi
