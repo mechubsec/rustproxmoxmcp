@@ -29,7 +29,7 @@ run_helper() ( "$@" ) >/dev/null 2>&1
 # Fresh create: regular file, requested mode.
 target="$work/fresh.json"
 run_helper install_generated_file 0600 "$target" empty_token_store || fail "fresh create"
-[ -f "$target" ] && [ ! -L "$target" ] || fail "fresh target not a regular file"
+if [ ! -f "$target" ] || [ -L "$target" ]; then fail "fresh target not a regular file"; fi
 [ "$(stat -c %a "$target")" = 600 ] || fail "fresh target mode"
 
 # Existing regular file is preserved.
