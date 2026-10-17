@@ -7,22 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-17
+
+First release that ships a signed release tarball and checksum alongside the
+image (v0.11.1 predates the signing workflow).
+
 ### Security
 
-- **Startup reports every loose credential-file mode in one pass.**
-  `clusters.json`, each per-cluster API token file the inventory names,
-  `tokens.json`, `waivers.json` when that file is present, the audit HMAC
-  key, and the approval-digest key are checked together. The inventory,
-  cluster token files, `tokens.json`, `waivers.json`, and the approval-digest
-  key stay mode `0600`. The audit HMAC key is newly held to that mode, owned
-  by the process uid, with no symlinks: a key left at `0640`, or bind-mounted
-  under a different uid, now refuses startup. A cluster CA bundle stays a
-  plain read: it is public trust material and may be mode `0644`. On-disk
-  directories stay
-  `/etc/proxmoxmcp` and `/var/lib/proxmoxmcp`. `tokens.json` stays
-  `/var/lib/proxmoxmcp/tokens.json`, and the legacy
-  `/etc/proxmoxmcp/tokens.json` fallback still applies only to that exact
-  path. Stdio still does not require the bearer store.
+- Startup checks every credential-file mode in one pass and refuses loose
+  permissions.
+- Installer file handling is hardened against unsafe path writes.
+
+### Changed
+
+- Startup refusals use the shared validator exit helper.
+- mecmcp pin bumped to v0.28.1; reusable release workflows pinned to v0.28.1.
+- Release workflows sign and attach the tarball and publish to the MCP Registry.
+- CI workflow tokens use least-privilege permissions.
+- Restore capability documentation refreshed; dependency updates.
 
 ## [0.11.1] - 2026-10-08
 
