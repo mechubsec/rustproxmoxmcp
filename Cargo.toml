@@ -49,7 +49,7 @@ tokio-rustls = "0.26"
 
 # Internal workspace crate. This version must be bumped alongside
 # [workspace.package] version on each release.
-rust-proxmoxmcp-core = { path = "crates/rust-proxmoxmcp-core", version = "0.11.1" }
+rust-proxmoxmcp-core = { path = "crates/rust-proxmoxmcp-core", version = "0.11.2" }
 
 # mecmcp is consumed read-only at an exact pinned version. Do not relax the tag.
 mecmcp-audit     = { version = "0.28.1", git = "https://github.com/mechubsec/mecmcp", tag = "v0.28.1" }
