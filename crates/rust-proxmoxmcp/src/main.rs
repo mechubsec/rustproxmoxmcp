@@ -326,6 +326,9 @@ fn token_command_to_action(command: TokenCommand) -> Result<(TokenAction, Option
                 tokens_file,
                 name,
                 devices,
+                // Selector-scoped tokens are not offered: this server resolves no
+                // device attributes, so such a token would be granted no devices.
+                device_selector: Vec::new(),
                 tools,
                 provider,
                 provider_tier,

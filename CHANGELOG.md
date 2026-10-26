@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Upgrade break: rename any token named `oauth:*` before upgrading.** mecmcp
+> 0.29 reserves the `oauth:` prefix, and a `tokens.json` holding such a name
+> now fails to load as a whole (`token name '…' uses the reserved 'oauth:'
+> prefix`), so the HTTP server refuses to start and no token works. Before the
+> upgrade, apply or cancel every open change set that token planned, then mint
+> a replacement under a new name and revoke the old one (`rust-proxmoxmcp token
+> add` / `token revoke`), updating any waiver whose `principal` names it.
+> Renaming with change sets still open would let the renamed token approve its
+> own plan, since approval compares names.
+
+### Changed
+
+- mecmcp pin bumped to v0.30.1; reusable release workflows pinned to v0.30.1.
+  A `tokens.json` entry carrying mecmcp's new `device_selectors` field is
+  granted no devices by this server, which resolves no device attributes.
+  Do not add `device_selectors` to a store that an older binary (0.11.2 or
+  earlier, mecmcp ≤ 0.29.4) may still read, including after a rollback: an
+  older reader ignores the field and grants the token its full `devices` scope.
+- Every per-call audit line gains `oauth_issuer=`, `oauth_subject=`,
+  `oauth_client_id=` (empty for static-token callers) and
+  `identity_mechanism=`. Update strict audit parsers before upgrading.
+
 ## [0.11.2] - 2026-10-17
 
 First release that ships a signed release tarball and checksum alongside the
