@@ -432,6 +432,10 @@ pub async fn delete_snapshot(
 /// snapshot is lost. A preview for this operation should say what is being
 /// overwritten, not merely what is being restored.
 ///
+/// `start` asks Proxmox to boot the guest once the rollback succeeds, sent as
+/// `start=1` only when true so the default request is unchanged. Proxmox
+/// checks no power privilege for it; the caller must.
+///
 /// # Errors
 ///
 /// As [`destroy_container`].
@@ -441,6 +445,7 @@ pub async fn rollback_snapshot(
     kind: crate::selector::GuestType,
     vmid: u32,
     snapname: &str,
+    start: bool,
 ) -> Result<String, ProxmoxError> {
     let path_template = "/api2/json/nodes/{node}/{kind}/{vmid}/snapshot/{snapname}/rollback";
     let vmid_string = vmid.to_string();
@@ -451,7 +456,8 @@ pub async fn rollback_snapshot(
         ("snapname", snapname),
     ];
 
-    let data = client.post_form(path_template, params, &[]).await?;
+    let form: &[(&str, &str)] = if start { &[("start", "1")] } else { &[] };
+    let data = client.post_form(path_template, params, form).await?;
     upid_from(data)
 }
 

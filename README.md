@@ -392,7 +392,7 @@ privileges guard.
 | `Datastore.Audit` | `get_storage`, `list_backups`, `list_isos`, `list_templates` |
 | `VM.PowerMgmt` | `start_vm`, `stop_vm`, `shutdown_vm`, `reset_vm`, `start_container`, `stop_container`, `restart_container` |
 | `VM.Snapshot` | `create_snapshot`, `delete_snapshot` (an apply-time `plan_proxmox_destroy` op) |
-| `VM.Snapshot.Rollback` | `rollback_snapshot` (an apply-time op) |
+| `VM.Snapshot.Rollback` | `rollback_snapshot` (an apply-time op); with `start: true` Proxmox checks no `VM.PowerMgmt`, so this server also requires the `start_vm`/`start_container` scope and the `low` tier |
 | `VM.Backup` | `create_backup`, `restore_backup` (an apply-time op) |
 | `VM.Clone` | `clone_vm` |
 | `VM.Config.Disk` | `resize_disk` |

@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the base `ProxmoxMcp` role; without it the tool returns Proxmox's 403.
   The grant is node-admin on that node, not a read-only privilege. See the
   README privilege table.
+- `plan_proxmox_destroy` `op: "rollback_snapshot"` takes an optional `start`
+  flag that boots the guest after the rollback (`pct rollback --start 1`
+  equivalent). Snapshot rollback and delete were already the
+  `rollback_snapshot` / `delete_snapshot` ops of that plan, approve, apply
+  flow. Proxmox checks no power privilege for `start`, so plan, approve and
+  apply also require the `start_vm` (QEMU) or `start_container` (LXC) scope and
+  the `low` action tier. `start: true` is refused on every other op, is shown in the
+  preview, and is omitted from the stored action when false, so existing change
+  sets keep their approval digest.
 
 ### Changed
 

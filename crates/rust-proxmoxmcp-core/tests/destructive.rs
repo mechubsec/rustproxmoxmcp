@@ -106,14 +106,50 @@ async fn rolling_back_posts_to_the_rollback_subpath() {
     .await;
     let client = client_for(&server);
 
-    rollback_snapshot(&client, "pve2", GuestType::Lxc, 950, "pre-upgrade-20260825")
-        .await
-        .expect("rollback");
+    rollback_snapshot(
+        &client,
+        "pve2",
+        GuestType::Lxc,
+        950,
+        "pre-upgrade-20260825",
+        false,
+    )
+    .await
+    .expect("rollback");
 
     let recorded = server.requests();
     let request = recorded.last().expect("request");
     assert_eq!(request.method, "POST", "a rollback is a POST, not a DELETE");
     assert!(request.path.ends_with("/rollback"), "{}", request.path);
+}
+
+#[tokio::test]
+async fn rolling_back_sends_start_only_when_asked() {
+    ensure_crypto_provider();
+
+    let server = TlsMockServer::start(vec![Route {
+        path: "/api2/json/nodes/pve2/lxc/950/snapshot/pre-upgrade-20260825/rollback",
+        status: 200,
+        body: UPID,
+    }])
+    .await;
+    let client = client_for(&server);
+
+    for start in [false, true] {
+        rollback_snapshot(
+            &client,
+            "pve2",
+            GuestType::Lxc,
+            950,
+            "pre-upgrade-20260825",
+            start,
+        )
+        .await
+        .expect("rollback");
+        let recorded = server.requests();
+        let body = &recorded.last().expect("request").body;
+        assert_eq!(body.contains("start=1"), start, "start={start}: {body:?}");
+    }
 }
 
 #[tokio::test]

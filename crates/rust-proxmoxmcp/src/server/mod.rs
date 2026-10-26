@@ -116,6 +116,45 @@ const fn tool_for_op(op: &str, kind: GuestType) -> Option<&'static str> {
     }
 }
 
+/// Require the power authority a `rollback_snapshot` with `start` implies.
+///
+/// Proxmox gates rollback on `VM.Snapshot` alone and checks no power privilege
+/// for the start, so without this a token granted `rollback_snapshot` but not
+/// `start_vm`/`start_container` could boot a guest through the rollback. The
+/// same two checks a direct start passes: the start tool's scope, and the
+/// `low` action tier. Run at plan, approve and apply, like the op's own tool.
+///
+/// A no-op when the action does not start the guest.
+///
+/// # Errors
+/// Returns the boxed `CallToolResult` to `return *result` from a handler.
+fn require_start_authority(
+    caller: Option<&CallerCtx<ProxmoxGrant>>,
+    grant: &ProxmoxGrant,
+    action: &change_set::DestroyAction,
+    kind: GuestType,
+) -> Result<(), Box<CallToolResult>> {
+    use rust_proxmoxmcp_core::grant::ProxmoxAction;
+
+    if !action.start {
+        return Ok(());
+    }
+    let start_tool = match kind {
+        GuestType::Lxc => "start_container",
+        GuestType::Qemu => "start_vm",
+    };
+    if let Err(error) = authorize_call(caller, start_tool, Some(&action.cluster), WRITE_TOOLS) {
+        return Err(Box::new(authz_tool_error(error)));
+    }
+    if !grant.allows_action(ProxmoxAction::Low) {
+        return Err(Box::new(tool_error(
+            "starting the guest after a rollback requires the 'low' action tier, which this \
+             caller does not carry",
+        )));
+    }
+    Ok(())
+}
+
 /// Render the preview an approver reviews for one destructive action.
 ///
 /// Operation-specific by necessity. `render_preview` produces a guest-destroy
@@ -158,8 +197,13 @@ fn render_destructive_preview(
         "rollback_snapshot" => format!(
             "ROLLBACK {target} to snapshot '{}'\n  \
              OVERWRITES the guest's current state. Everything written since that \
-             snapshot is lost. This is not a deletion — it is a replacement.",
-            action.snapname.as_deref().unwrap_or("?")
+             snapshot is lost. This is not a deletion — it is a replacement.{}",
+            action.snapname.as_deref().unwrap_or("?"),
+            if action.start {
+                "\n  The guest will be STARTED after the rollback."
+            } else {
+                ""
+            }
         ),
         "delete_backup" => format!(
             "DELETE BACKUP '{}' on storage '{}' at node '{}'\n  \
@@ -282,6 +326,15 @@ fn build_destroy_action(
         Ok(value)
     };
 
+    // Refused for every other op rather than silently ignored: a caller who
+    // believes `start` took effect would be wrong about the guest's power state.
+    if args.start == Some(true) && args.op != "rollback_snapshot" {
+        return Err(format!(
+            "start is only valid for rollback_snapshot, not {}",
+            args.op
+        ));
+    }
+
     let mut storage_node = None;
     let mut target_node = None;
     let mut config = None;
@@ -359,6 +412,7 @@ fn build_destroy_action(
         cluster: args.cluster.clone(),
         vmid: args.vmid,
         snapname,
+        start: args.start.unwrap_or(false),
         storage,
         volid,
         storage_node,
@@ -2785,7 +2839,7 @@ impl ProxmoxServer {
                     .snapname
                     .as_deref()
                     .ok_or_else(|| missing("snapname"))?;
-                guests::rollback_snapshot(client, node, kind, vmid, snapname).await
+                guests::rollback_snapshot(client, node, kind, vmid, snapname, action.start).await
             }
             "delete_backup" | "delete_iso" => {
                 let storage = action
@@ -5137,6 +5191,10 @@ impl ProxmoxServer {
         {
             return authz_tool_error(error);
         }
+        if let Err(result) = require_start_authority(caller.as_ref(), &grant, &action, guest.r#type)
+        {
+            return *result;
+        }
 
         if let Err(error) = require_unrestricted_scope_for_delete_iso(&action.op, &grant) {
             return tool_error(error);
@@ -5619,6 +5677,11 @@ impl ProxmoxServer {
             {
                 return tool_error(error);
             }
+            if let Err(result) =
+                require_start_authority(caller.as_ref(), &grant, &action, guest.r#type)
+            {
+                return *result;
+            }
 
             if let Err(error) = require_unrestricted_scope_for_delete_iso(&action.op, &grant) {
                 return tool_error(error);
@@ -5960,6 +6023,10 @@ impl ProxmoxServer {
             authorize_call(caller.as_ref(), op_tool, Some(&args.cluster), WRITE_TOOLS)
         {
             return authz_tool_error(error);
+        }
+        if let Err(result) = require_start_authority(caller.as_ref(), &grant, &action, guest.r#type)
+        {
+            return *result;
         }
 
         if let Err(error) = require_unrestricted_scope_for_delete_iso(&action.op, &grant) {
@@ -8913,6 +8980,7 @@ mod destructive_action_tests {
             vmid: 617,
             op: op.to_owned(),
             snapname: None,
+            start: None,
             storage: None,
             volid: None,
             storage_node: None,
@@ -9097,6 +9165,7 @@ mod destructive_scope_tests {
             cluster: "pve3".to_owned(),
             vmid: 617,
             snapname: snapname.map(ToOwned::to_owned),
+            start: false,
             storage: Some("local".to_owned()),
             volid: volid.map(ToOwned::to_owned),
             storage_node: Some("pve2".to_owned()),
@@ -9135,6 +9204,23 @@ mod destructive_scope_tests {
                 "{op} previewed as a guest destroy"
             );
         }
+    }
+
+    /// A change set recorded before `start` existed must deserialize and
+    /// re-serialize byte-identically, or its approval digest would change.
+    #[test]
+    fn an_action_recorded_without_start_round_trips_unchanged() {
+        let old = r#"{"op":"rollback_snapshot","cluster":"pve3","vmid":617,"snapname":"s","online":false,"with_local_disks":false}"#;
+        let action: super::change_set::DestroyAction = serde_json::from_str(old).unwrap();
+        assert!(!action.start);
+        assert_eq!(serde_json::to_string(&action).unwrap(), old);
+        let mut started = action;
+        started.start = true;
+        assert!(
+            serde_json::to_string(&started)
+                .unwrap()
+                .contains(r#""start":true"#)
+        );
     }
 
     /// The two that replace state rather than remove an object must say so.
@@ -9207,6 +9293,7 @@ mod destructive_scope_tests {
             vmid: 617,
             op: "delete_backup".to_owned(),
             snapname: None,
+            start: None,
             storage: Some("local".to_owned()),
             volid: Some("local:backup/x".to_owned()),
             storage_node: None,
@@ -9325,6 +9412,7 @@ mod destructive_scope_tests {
                 cluster: "pve3".to_owned(),
                 vmid: 617,
                 snapname: None,
+                start: false,
                 storage: None,
                 volid: None,
                 storage_node: None,
