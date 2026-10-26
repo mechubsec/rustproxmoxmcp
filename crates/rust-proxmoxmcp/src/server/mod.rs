@@ -1501,6 +1501,114 @@ pub struct PagedStorageArgs {
     pub limit: Option<u32>,
 }
 
+/// Arguments for `list_tasks`. Every filter is optional and passed straight
+/// to Proxmox's `/nodes/{node}/tasks`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListTasksArgs {
+    /// Inventory name of the cluster.
+    pub cluster: String,
+    /// Node name as reported by `get_nodes`.
+    pub node: String,
+    /// Only tasks of this type, e.g. `vzdump` or `vzstart` (letters, digits,
+    /// `_` and `-`; at most 64 characters).
+    #[serde(default)]
+    pub typefilter: Option<String>,
+    /// Only tasks for this guest id.
+    #[serde(default)]
+    pub vmid: Option<u32>,
+    /// Only tasks started at or after this UNIX epoch (seconds).
+    #[serde(default)]
+    pub since: Option<u64>,
+    /// Only tasks started at or before this UNIX epoch (seconds).
+    #[serde(default)]
+    pub until: Option<u64>,
+    /// Maximum tasks to return, 1 to 500. Omit for Proxmox's default of 50.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// When true, only tasks whose status is an error.
+    #[serde(default)]
+    pub errors: Option<bool>,
+    /// Comma-separated task statuses to keep: `ok`, `error`, `warning`,
+    /// `unknown` (case-insensitive).
+    #[serde(default)]
+    pub statusfilter: Option<String>,
+}
+
+/// Largest `limit` accepted for `list_tasks`: a task record is a few hundred
+/// bytes, so 500 stays well inside the 512 KiB result cap (see
+/// [`DEFAULT_PAGE_LIMIT`]).
+const MAX_TASK_LIMIT: u32 = 500;
+
+/// Longest `typefilter` accepted; real Proxmox task types are under 20 characters.
+const MAX_TASK_TYPEFILTER_LEN: usize = 64;
+
+/// Validate `list_tasks` filters and build the query parameters to send.
+///
+/// Only parameters the caller set are returned, so an unfiltered call keeps
+/// Proxmox's own defaults.
+///
+/// # Errors
+///
+/// Returns a message naming the first filter that is malformed.
+fn list_tasks_query(args: &ListTasksArgs) -> Result<Vec<(&'static str, String)>, String> {
+    let mut query = Vec::new();
+    if let Some(typefilter) = &args.typefilter {
+        let valid_chars = typefilter
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if typefilter.is_empty() || typefilter.len() > MAX_TASK_TYPEFILTER_LEN || !valid_chars {
+            return Err(format!(
+                "typefilter must be 1 to {MAX_TASK_TYPEFILTER_LEN} characters of letters, \
+                 digits, '_' or '-'"
+            ));
+        }
+        query.push(("typefilter", typefilter.clone()));
+    }
+    if let Some(vmid) = args.vmid {
+        if vmid == 0 {
+            return Err("vmid must be greater than 0".to_owned());
+        }
+        query.push(("vmid", vmid.to_string()));
+    }
+    if let (Some(since), Some(until)) = (args.since, args.until)
+        && since > until
+    {
+        return Err(format!("since {since} is after until {until}"));
+    }
+    if let Some(since) = args.since {
+        query.push(("since", since.to_string()));
+    }
+    if let Some(until) = args.until {
+        query.push(("until", until.to_string()));
+    }
+    if let Some(limit) = args.limit {
+        if limit == 0 || limit > MAX_TASK_LIMIT {
+            return Err(format!("limit must be between 1 and {MAX_TASK_LIMIT}"));
+        }
+        query.push(("limit", limit.to_string()));
+    }
+    if args.errors == Some(true) {
+        query.push(("errors", "1".to_owned()));
+    }
+    if let Some(statusfilter) = &args.statusfilter {
+        let statuses: Vec<String> = statusfilter
+            .split(',')
+            .map(|status| status.trim().to_ascii_lowercase())
+            .collect();
+        if statuses
+            .iter()
+            .any(|status| !matches!(status.as_str(), "ok" | "error" | "warning" | "unknown"))
+        {
+            return Err(
+                "statusfilter must be a comma-separated list of ok, error, warning, unknown"
+                    .to_owned(),
+            );
+        }
+        query.push(("statusfilter", statuses.join(",")));
+    }
+    Ok(query)
+}
+
 /// Arguments for a task-scoped read.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TaskArgs {
@@ -2008,6 +2116,33 @@ impl ProxmoxServer {
         page: Option<(u32, u32)>,
         context: &RequestContext<RoleServer>,
     ) -> CallToolResult {
+        self.serve_read_with_query(
+            tool,
+            cluster,
+            extra_params,
+            &[],
+            vmid,
+            requires_unrestricted_guest_scope,
+            page,
+            context,
+        )
+        .await
+    }
+
+    /// [`Self::serve_read`] plus caller-supplied query parameters, appended
+    /// after the catalog entry's static `query`. Callers validate them first.
+    #[allow(clippy::too_many_arguments)]
+    async fn serve_read_with_query(
+        &self,
+        tool: &'static str,
+        cluster: &str,
+        extra_params: &[(&str, &str)],
+        extra_query: &[(&str, String)],
+        vmid: Option<u32>,
+        requires_unrestricted_guest_scope: bool,
+        page: Option<(u32, u32)>,
+        context: &RequestContext<RoleServer>,
+    ) -> CallToolResult {
         let caller = Self::caller(context);
         if let Err(error) = authorize_call(caller.as_ref(), tool, Some(cluster), WRITE_TOOLS) {
             return authz_tool_error(error);
@@ -2099,7 +2234,18 @@ impl ProxmoxServer {
             .map(|(name, value)| (*name, value.as_str()))
             .collect();
 
-        let result = match client.get_json(entry.path, &borrowed, entry.query).await {
+        let query: Vec<(&str, &str)> = entry
+            .query
+            .iter()
+            .copied()
+            .chain(
+                extra_query
+                    .iter()
+                    .map(|(name, value)| (*name, value.as_str())),
+            )
+            .collect();
+
+        let result = match client.get_json(entry.path, &borrowed, &query).await {
             Ok(mut value) => {
                 // Apply type_filter if present
                 if let Some(filter_type) = entry.type_filter
@@ -3440,21 +3586,28 @@ impl ProxmoxServer {
 
     #[tool(
         name = "list_tasks",
-        description = "Recent tasks on one node. Not paginated: Proxmox's \
-                       `/nodes/{node}/tasks` endpoint applies its own server-side \
-                       default (typically the 50 most recent) and this tool does not \
-                       send `start`/`limit`, so a full page here is Proxmox's default \
-                       window, not a complete history."
+        description = "Recent tasks on one node. Not paginated: returns the bare array \
+                       Proxmox's `/nodes/{node}/tasks` gives, which by default is its \
+                       50 most recent tasks, not a complete history. Narrow it with the \
+                       optional `typefilter` (e.g. `vzdump`), `vmid`, `since`/`until` \
+                       (UNIX epoch), `errors`, and `statusfilter` (ok, error, warning, \
+                       unknown; comma-separated), or raise the window with `limit` \
+                       (1 to 500). There is no offset."
     )]
     async fn list_tasks(
         &self,
-        Parameters(args): Parameters<NodeArgs>,
+        Parameters(args): Parameters<ListTasksArgs>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        self.serve_read(
+        let query = match list_tasks_query(&args) {
+            Ok(query) => query,
+            Err(message) => return tool_error(message),
+        };
+        self.serve_read_with_query(
             "list_tasks",
             &args.cluster,
             &[("node", args.node.as_str())],
+            &query,
             None,
             true,
             None,

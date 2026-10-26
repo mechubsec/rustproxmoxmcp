@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Renaming with change sets still open would let the renamed token approve its
 > own plan, since approval compares names.
 
+### Added
+
+- `list_tasks` accepts optional `typefilter`, `vmid`, `since`, `until`, `limit`
+  (1 to 500), `errors` and `statusfilter`, passed through to Proxmox's
+  `/nodes/{node}/tasks`, so a busy task type no longer pushes everything else
+  out of the default 50-task window. Filters are validated before any request.
+  It stays a bare, unpaginated array (MEC-871); there is no `start`/offset.
+
 ### Changed
 
 - mecmcp pin bumped to v0.30.1; reusable release workflows pinned to v0.30.1.
