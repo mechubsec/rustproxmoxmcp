@@ -167,7 +167,7 @@ outside the tool call: **there is deliberately no `grant_waiver` tool and no
 | `list_backups` | storage | Backup archives on one storage backend (paginated: `offset`/`limit`, default 500, max 700) |
 | `list_isos` | storage | ISO images on one storage backend |
 | `list_templates` | storage | Container templates on one storage backend |
-| `list_tasks` | node | Recent tasks on one node (not paginated -- Proxmox applies its own server-side window, typically the 50 most recent) |
+| `list_tasks` | node; optional `typefilter`, `vmid`, `since`, `until`, `limit` (1-500), `errors`, `statusfilter` | Recent tasks on one node (not paginated -- Proxmox applies its own server-side window, 50 most recent unless `limit` is set) |
 | `get_task_status` | task | Status of one task by UPID |
 | `get_proxmox_change_set` | change set | One change set's state and preview |
 | `get_cluster_firewall_rules` | cluster | Cluster-wide firewall rules |
