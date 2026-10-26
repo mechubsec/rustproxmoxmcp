@@ -8547,6 +8547,8 @@ mod tests {
             request_id: uuid::Uuid::new_v4(),
             oidc_subject: None,
             verified_approver: None,
+            verified_proposer: None,
+            oauth: None,
         };
 
         let result = resolve_grant(Some(&grantless_caller));
