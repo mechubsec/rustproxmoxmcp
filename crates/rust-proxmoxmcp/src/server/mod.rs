@@ -788,6 +788,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "get_node_firewall_options",
     "get_node_firewall_rules",
     "get_node_status",
+    "get_node_updates",
     "get_nodes",
     "get_proxmox_change_set",
     "get_storage",
@@ -2361,6 +2362,31 @@ impl ProxmoxServer {
     ) -> CallToolResult {
         self.serve_read(
             "get_node_status",
+            &args.cluster,
+            &[("node", args.node.as_str())],
+            None,
+            true,
+            None,
+            &context,
+        )
+        .await
+    }
+
+    #[tool(
+        name = "get_node_updates",
+        description = "Pending apt package updates on one node (package, old and new version, \
+                        priority, origin). Requires Sys.Modify on /nodes/{node} -- Proxmox \
+                        gates this read behind it, so a 403 means that privilege is not granted."
+    )]
+    async fn get_node_updates(
+        &self,
+        Parameters(args): Parameters<NodeArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        // shortcut: ~650 B per package, so RESULT_LIMITS refuses a list of ~800+
+        // (a major-version upgrade); page it if patch automation hits that.
+        self.serve_read(
+            "get_node_updates",
             &args.cluster,
             &[("node", args.node.as_str())],
             None,

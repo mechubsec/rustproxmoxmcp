@@ -29,6 +29,11 @@ fn routes() -> Vec<common::Route> {
             status: 200,
             body: br#"{"data":[{"storage":"local","type":"dir","total":100,"used":50}]}"#,
         },
+        common::Route {
+            path: "/api2/json/nodes/pve2/apt/update",
+            status: 200,
+            body: br#"{"data":[{"Package":"pve-manager","OldVersion":"9.2.0","Version":"9.2.1","Priority":"optional","Origin":"Proxmox"}]}"#,
+        },
     ]
 }
 
@@ -94,5 +99,37 @@ async fn a_narrowed_token_cannot_reach_get_storage() {
     )
     .await
     .expect_err("a narrowed guest scope must not reach get_storage");
+    assert!(err.contains('*'), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unrestricted_token_reaches_get_node_updates() {
+    let h = common::TestServer::start_with_routes(spec("get_node_updates", &["*"]), routes()).await;
+
+    let rendered = common::call(
+        &h,
+        "get_node_updates",
+        json!({"cluster": "pve3", "node": "pve2"}),
+    )
+    .await
+    .expect("unrestricted token reaches get_node_updates");
+    assert!(rendered.to_string().contains("pve-manager"), "{rendered}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_narrowed_token_cannot_reach_get_node_updates() {
+    let h = common::TestServer::start_with_routes(
+        spec("get_node_updates", &["vmid:600-699"]),
+        routes(),
+    )
+    .await;
+
+    let err = common::call(
+        &h,
+        "get_node_updates",
+        json!({"cluster": "pve3", "node": "pve2"}),
+    )
+    .await
+    .expect_err("a narrowed guest scope must not reach get_node_updates");
     assert!(err.contains('*'), "{err}");
 }

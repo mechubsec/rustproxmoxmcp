@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/nodes/{node}/tasks`, so a busy task type no longer pushes everything else
   out of the default 50-task window. Filters are validated before any request.
   It stays a bare, unpaginated array (MEC-871); there is no `start`/offset.
+- `get_node_updates(cluster, node)` read tool: pending apt package updates on a
+  node (`GET /nodes/{node}/apt/update`). Proxmox gates that endpoint behind
+  `Sys.Modify` on `/nodes/{node}`, so it is an optional add-on grant, not part
+  of the base `ProxmoxMcp` role; without it the tool returns Proxmox's 403.
+  The grant is node-admin on that node, not a read-only privilege. See the
+  README privilege table.
 
 ### Changed
 

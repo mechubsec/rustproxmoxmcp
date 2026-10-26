@@ -78,6 +78,16 @@ pub const READ_TOOLS: &[ReadTool] = &[
         query: &[],
     },
     ReadTool {
+        name: "get_node_updates",
+        method: Method::Get,
+        path: "/api2/json/nodes/{node}/apt/update",
+        needs_guest: false,
+        description: "Pending apt package updates on one node.",
+        type_filter: None,
+        guest_listing: false,
+        query: &[],
+    },
+    ReadTool {
         name: "get_vms",
         method: Method::Get,
         path: "/api2/json/cluster/resources",
@@ -414,6 +424,13 @@ mod tests {
                 tool.path
             );
         }
+    }
+
+    #[test]
+    fn get_node_updates_reads_the_node_apt_update_list() {
+        let tool = read_tool("get_node_updates").expect("registered");
+        assert_eq!(tool.path, "/api2/json/nodes/{node}/apt/update");
+        assert!(!tool.needs_guest);
     }
 
     #[test]
