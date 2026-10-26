@@ -16,12 +16,12 @@
 
 ## Status: 0.11.0 — the tool surface is complete but for one gap
 
-**50 callable tools**: 31 read, 18 `low`, and `apply_proxmox_change_set` as the
+**51 callable tools**: 32 read, 18 `low`, and `apply_proxmox_change_set` as the
 single `destructive` entry point. Seven further names --- `delete_vm`,
 `delete_container`, `delete_snapshot`, `delete_backup`, `delete_iso`,
 `restore_backup`, `rollback_snapshot` --- are **authorization scopes, not
 tools**: a token grants them by name and reaches them through
-`plan_proxmox_destroy`. `KNOWN_TOOLS` therefore holds 57 entries.
+`plan_proxmox_destroy`. `KNOWN_TOOLS` therefore holds 58 entries.
 
 ### What is still missing
 
@@ -142,20 +142,21 @@ outside the tool call: **there is deliberately no `grant_waiver` tool and no
   1. **Stage 1** (before the catalog call): Bearer token validation, tool and cluster scope checks.
   2. **Stage 2** (guest-addressed tools only): Guest resolution, grant evaluation (VMID range, tag, pool selectors), and fail-closed protection.
 - **Protection union:** A guest is protected if it appears in `protected_vmids` **or** carries a tag from `protected_tags`. A protected guest is refused by every destructive and service-interrupting tool unless a waiver or lab mode supplies an override. (Read tools see protected guests normally.)
-- **A guest-addressed tool never accepts the node from the caller.** It resolves it on every call, and again at apply, because guests migrate. Node-, storage- and task-scoped tools (`get_node_status`, `get_storage`, `list_backups`, `list_isos`, `list_templates`, `list_tasks`, `get_task_status`, `download_iso`, `get_node_firewall_rules`, `get_node_firewall_options`) do take a `node`, because a node is what they address --- there is no guest to resolve one from. The exception that matters is `create_vm`/`create_container`: they name a *guest* but the guest does not exist yet, so the caller supplies the node, and it is the one place a guest-addressed call can reach the wrong host. `stop_task` is deliberately not in that list: it reads the node from the UPID.
+- **A guest-addressed tool never accepts the node from the caller.** It resolves it on every call, and again at apply, because guests migrate. Node-, storage- and task-scoped tools (`get_node_status`, `get_node_updates`, `get_storage`, `list_backups`, `list_isos`, `list_templates`, `list_tasks`, `get_task_status`, `download_iso`, `get_node_firewall_rules`, `get_node_firewall_options`) do take a `node`, because a node is what they address --- there is no guest to resolve one from. The exception that matters is `create_vm`/`create_container`: they name a *guest* but the guest does not exist yet, so the caller supplies the node, and it is the one place a guest-addressed call can reach the wrong host. `stop_task` is deliberately not in that list: it reads the node from the UPID.
 - **Catalog-driven dispatch:** Every read tool's HTTP method, path template, query flag, and type filter is declared once in `catalog.rs`.
 - **In-flight recovery:** A change set left `Applying` with a task handle is re-probed at startup, so an apply interrupted by a restart resolves rather than staying unresolved forever.
 - **SIGHUP reload:** `systemctl reload` reloads `clusters.json` in place without dropping in-flight calls. A failed reload logs and retains the previous snapshot.
 - **Per-cluster CA pinning:** Each cluster can name a `ca_pem_path`. There is **no insecure-skip-verify at any layer**, so a cluster with a private CA needs its CA installed and must be addressed by a name its certificate covers.
 - **Audit logging:** JSON-structured logs with optional PII redaction (HMAC-keyed or drop). Every tool call logs cluster, guest, tier, and protection status.
 
-### The 31 read tools
+### The 32 read tools
 
 | Tool | Scope | Description |
 |------|-------|-------------|
 | `get_cluster_status` | cluster | Quorum and node membership |
 | `get_nodes` | cluster | All nodes with status and resource totals |
 | `get_node_status` | node | Detailed status for one node |
+| `get_node_updates` | node | Pending apt package updates (needs optional `Sys.Modify`, see below) |
 | `get_vms` | cluster | All QEMU guests with node, status, tags (paginated: `offset`/`limit`, default 500, max 700) |
 | `get_containers` | cluster | All LXC guests with node, status, tags (paginated: `offset`/`limit`, default 500, max 700) |
 | `get_vm_config` | guest (QEMU only) | Configuration including Proxmox digest, with `description`/`cicustom`/`args` content redacted on a best-effort basis -- credential-shaped text is stripped, but this is not a safe place to store secrets (sshkeys and network config preserved) |
@@ -400,6 +401,7 @@ privileges guard.
 | `VM.Allocate` | `create_vm`, `create_container`, `delete_vm`/`delete_container` (the `destroy_guest` apply-time op), and `restore_backup` when it overwrites an existing VMID |
 | `Datastore.AllocateSpace` | `create_vm`/`create_container` (disk allocation), `create_backup`, `delete_backup` |
 | `Datastore.AllocateTemplate` | `download_iso` (the destination storage) |
+| `Sys.Modify` | `get_node_updates`, granted on `/nodes/{node}`. **Optional add-on, not in the base role** — see below |
 | `Datastore.Allocate` | `delete_iso`. **Optional add-on, not in the base role** — see below |
 | `Sys.AccessNetwork` | `download_iso` (`download-url`), granted on `/nodes/{node}`. `API2/Storage/Status.pm` accepts either this privilege scoped to the node, or `Sys.Audit`+`Sys.Modify` on `/` — the node-scoped grant is the one that does not also hand out node reboot/network/disk-wipe access. `Sys.AccessNetwork` for `download-url` requires PVE 8+; on older clusters use the broader `Sys.Audit`+`Sys.Modify` pair on `/` instead |
 
@@ -420,6 +422,20 @@ ISOs instead of the whole cluster:
 # any other storage in the cluster.
 pveum role add ProxmoxMcpIsoDelete -privs "Datastore.Allocate"
 pveum acl modify /storage/<iso-storage> --users mcp-automation@pve --roles ProxmoxMcpIsoDelete
+```
+
+`Sys.Modify` is also what `get_node_updates` needs: Proxmox gates
+`GET /nodes/{node}/apt/update` behind `Sys.Modify` on `/nodes/{node}`. It is
+**not** in the base role, and `get_node_updates` returns Proxmox's 403 without
+it. If this token must see pending updates, grant a separate role scoped to
+the node — but be clear that this still hands the token node-admin on that
+node (network config, disk init and wipe, `apt`, and more), not a read-only
+view:
+
+```sh
+# Optional: only if get_node_updates must work. Scoped to one node, not `/`.
+pveum role add ProxmoxMcpNodeUpdates -privs "Sys.Modify"
+pveum acl modify /nodes/<node> --users mcp-automation@pve --roles ProxmoxMcpNodeUpdates
 ```
 
 `Sys.Modify` on `/` is deliberately **not** in the role above. Cluster and
