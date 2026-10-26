@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-26
+
+Built on mecmcp v0.30.1. Adds `list_tasks` filters, `get_node_updates` and a
+`start` flag on snapshot rollback, and fixes three RUSTSEC advisories in the
+TLS stack.
+
 > **Upgrade break: rename any token named `oauth:*` before upgrading.** mecmcp
 > 0.29 reserves the `oauth:` prefix, and a `tokens.json` holding such a name
 > now fails to load as a whole (`token name '…' uses the reserved 'oauth:'
@@ -51,6 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every per-call audit line gains `oauth_issuer=`, `oauth_subject=`,
   `oauth_client_id=` (empty for static-token callers) and
   `identity_mechanism=`. Update strict audit parsers before upgrading.
+- Dependency updates: Rust and distroless base images, GitHub Actions, cargo
+  minor/patch group.
+
+### Security
+
+- rustls-webpki 0.103.16 (RUSTSEC-2026-0382, distrusted intermediates
+  accepted), webpki-root-certs 1.0.11 (RUSTSEC-2026-0383, distrusted emSign
+  intermediates) and ctutils 0.4.6 (RUSTSEC-2026-0385, non-constant-time
+  comparisons).
 
 ## [0.11.2] - 2026-10-17
 
