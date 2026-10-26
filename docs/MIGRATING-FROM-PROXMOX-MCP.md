@@ -67,7 +67,7 @@ node is how a request addresses the wrong guest after a migration.
 | `delete_vm` | `plan_proxmox_destroy` with `op: "destroy_guest"` |
 | `delete_container` | `plan_proxmox_destroy` with `op: "destroy_guest"` |
 | `delete_snapshot` | `op: "delete_snapshot"`, `snapname` |
-| `rollback_snapshot` | `op: "rollback_snapshot"`, `snapname` |
+| `rollback_snapshot` | `op: "rollback_snapshot"`, `snapname`, optional `start` (boot the guest after; also needs `start_vm`/`start_container`) |
 | `delete_backup` | `op: "delete_backup"`, `storage` + `volid` + `storage_node` |
 | `delete_iso` | `op: "delete_iso"`, `storage` + `volid` + `storage_node` |
 | `restore_backup` | `op: "restore_backup"`, `volid` |

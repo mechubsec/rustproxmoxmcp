@@ -81,6 +81,15 @@ pub struct PlanDestroyArgs {
     /// Snapshot name, for `delete_snapshot` and `rollback_snapshot`.
     #[serde(default)]
     pub snapname: Option<String>,
+    /// Start the guest once the rollback finishes, for `rollback_snapshot`
+    /// only. Defaults to `false`.
+    ///
+    /// Proxmox checks no power privilege for this, so the caller must also
+    /// be authorised for `start_vm` (QEMU) or `start_container` (LXC) and
+    /// carry the `low` action tier, as for a direct start. A QEMU snapshot
+    /// that includes RAM starts the VM regardless of this flag.
+    #[serde(default)]
+    pub start: Option<bool>,
     /// Storage backend, for `delete_backup` and `delete_iso`.
     #[serde(default)]
     pub storage: Option<String>,
@@ -171,6 +180,11 @@ pub(crate) struct DestroyAction {
     /// Snapshot name, for the snapshot operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapname: Option<String>,
+    /// Start the guest after a `rollback_snapshot`. Omitted from the stored
+    /// action when `false`, so a change set recorded before this field existed
+    /// serialises byte-identically and keeps its approval digest.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start: bool,
     /// Storage backend, for the volume operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage: Option<String>,
