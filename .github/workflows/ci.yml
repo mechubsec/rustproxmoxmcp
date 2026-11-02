@@ -174,7 +174,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Conformance
-        uses: mechubsec/mecmcp/packaging/conformance@6f5d09ce7b0df044c5194c2a30f183383a9d7b14
+        uses: mechubsec/mecmcp/packaging/conformance@312097bd231ff65746fb31a5739d0eda6fcb86dd
         with:
           staging: staging
           manifest: staging/conformance.toml
