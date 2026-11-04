@@ -72,7 +72,8 @@ impl ProxmoxError {
     #[must_use]
     pub fn guest_out_of_scope(cluster: &str) -> Self {
         Self::Denied(format!(
-            "guest does not exist or is outside this caller's scope in cluster {cluster}"
+            "guest is outside this caller's scope in cluster {cluster} (an unknown vmid gets \
+             the same answer)"
         ))
     }
 

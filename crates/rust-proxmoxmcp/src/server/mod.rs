@@ -4981,7 +4981,7 @@ impl ProxmoxServer {
 
     #[tool(
         name = "plan_proxmox_destroy",
-        description = "Plan a guest destroy operation for two-principal approval."
+        description = "Plan a destructive or config-changing guest operation for two-principal approval. `op` selects it: destroy_guest (default), delete_snapshot, rollback_snapshot, delete_backup, delete_iso, restore_backup, migrate, or update_vm_config (QEMU config keys, e.g. moving a `netN` NIC to another bridge or VLAN tag)."
     )]
     async fn plan_destroy(
         &self,

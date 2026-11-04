@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `plan_proxmox_destroy`'s description now lists its ops. `update_vm_config`
+  (a QEMU NIC's `netN` bridge or VLAN tag, among others) had been reachable
+  since 0.11.0 but was invisible behind "Plan a guest destroy operation". The
+  `config` field documents that a `netN` value must include `firewall=1`
+  (#210).
+- The absent/out-of-scope guest denial now reads `guest is outside this
+  caller's scope in cluster <c> (an unknown vmid gets the same answer)`. It is
+  still one text for both cases, so it reveals nothing about which guests
+  exist. Callers matching the old `does not exist` wording must update (#210).
+
 ## [0.12.0] - 2026-10-26
 
 Built on mecmcp v0.30.1. Adds `list_tasks` filters, `get_node_updates` and a
