@@ -121,6 +121,8 @@ pub struct PlanDestroyArgs {
     pub with_local_disks: bool,
     /// Proxmox QEMU config keys to set, for `update_vm_config`. Merged into
     /// the guest's existing config; keys not named here are unchanged.
+    /// A `netN` value is the full NIC spec and must include `firewall=1`,
+    /// e.g. `virtio=<mac>,bridge=vmbr1,tag=20,firewall=1`.
     ///
     /// Cloud-init fields (`ciuser`, `cipassword`, `sshkeys`, `ipconfigN`, ...)
     /// are ordinary QEMU config keys from Proxmox's point of view, so they
