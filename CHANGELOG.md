@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-10
+
+Security release: the 0.12.0 image's runtime base carries a zlib flagged HIGH,
+and its rmcp is covered by RUSTSEC-2026-0462.
+
 ### Changed
 
 - `plan_proxmox_destroy`'s description now lists its ops. `update_vm_config`
@@ -18,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller's scope in cluster <c> (an unknown vmid gets the same answer)`. It is
   still one text for both cases, so it reveals nothing about which guests
   exist. Callers matching the old `does not exist` wording must update (#210).
+- Dependency updates: Rust builder image (#211, #220). Reusable release
+  workflows pinned to mecmcp v0.32.0 (#214); the packaging conformance action
+  is pinned at mecmcp `a007528`, a README and lockfile commit after v0.32.0
+  (#215, #219).
+
+### Security
+
+- The image's `distroless/cc-debian13` runtime base moves to `cc66d22`, which
+  carries zlib `1.3.1-1+deb13u1` for CVE-2026-76844 and CVE-2026-85091. The
+  0.12.0 image's base (`3ee0029`) is affected (#212, #221).
+- rmcp 3.9.0 for RUSTSEC-2026-0462 (#213, #218). The advisory is in rmcp's
+  Streamable HTTP client, which this server does not use.
 
 ## [0.12.0] - 2026-10-26
 
