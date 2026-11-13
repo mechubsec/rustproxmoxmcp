@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Container images are published for `linux/amd64` and `linux/arm64`, so Apple
+  Silicon pulls a native image instead of failing with `no matching manifest`
+  (mechubsec/rustjunosmcp#648). Each platform builds on its own native runner.
+
 ## [0.12.1] - 2026-11-10
 
 Security release: the 0.12.0 image's runtime base carries a zlib flagged HIGH,
