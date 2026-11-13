@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-13
+
+The container image is now multi-arch: `linux/amd64` and `linux/arm64`.
+
 ### Changed
 
 - Container images are published for `linux/amd64` and `linux/arm64`, so Apple
