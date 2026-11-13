@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-11-13
+
+### Security
+
+- rustix 1.1.6 for RUSTSEC-2026-0486 (#226): its xattr functions marked unwritten
+  bytes as initialized when given a zero-length buffer. Lockfile only.
+
+### Fixed
+
+- The release image workflow pins mecmcp v0.33.2 (#225). Under v0.33.1 the 0.12.2
+  tag built both platforms but published no image: GitHub dropped the image
+  metadata passed between jobs because it contained a secret's value. The 0.12.2
+  image was published afterwards from a backfill run, but that path skips the MCP
+  Registry, so 0.12.3 is the first multi-arch release listed there.
+
 ## [0.12.2] - 2026-11-13
 
 The container image is now multi-arch: `linux/amd64` and `linux/arm64`.
