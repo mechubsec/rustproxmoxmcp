@@ -29,7 +29,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: 1.98.0
+          toolchain: 1.100.0
           components: clippy, rustfmt
 
       - name: Cache cargo
@@ -108,7 +108,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # rust-toolchain.toml pins the working toolchain (1.98.0); the MSRV
+      # rust-toolchain.toml pins the working toolchain (1.100.0); the MSRV
       # floor declared in Cargo.toml's rust-version is deliberately lower.
       # Remove the pin so the 1.89 toolchain below is what actually runs.
       - name: Drop the toolchain pin
@@ -144,7 +144,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: 1.98.0
+          toolchain: 1.100.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
