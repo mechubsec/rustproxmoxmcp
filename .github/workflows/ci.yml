@@ -100,6 +100,18 @@ jobs:
           echo "$argv" | grep -q -- '/var/lib/proxmoxmcp/tokens.json' || { echo "FAIL: --tokens-file path missing from argv with --host override"; exit 1; }
           echo "PASS: config paths survive --host override"
 
+      - name: Runtime base regression guard
+        run: |
+          # Image must stay off libssl (CVE-2026-124709) yet keep libgcc_s, which the
+          # binary links; then prove the binary actually starts there.
+          container_id=$(docker create rust-proxmoxmcp:ci)
+          files=$(docker export "$container_id" | tar -t)
+          docker rm "$container_id" > /dev/null
+          if echo "$files" | grep -E 'lib(ssl|crypto)\.so'; then echo "FAIL: libssl/libcrypto in image"; exit 1; fi
+          echo "$files" | grep -q 'libgcc_s\.so\.1$' || { echo "FAIL: libgcc_s.so.1 missing from image"; exit 1; }
+          docker run --rm rust-proxmoxmcp:ci --version
+          echo "PASS: no libssl, libgcc_s present, binary starts"
+
   msrv:
     name: Minimum supported Rust
     runs-on: ubuntu-24.04
