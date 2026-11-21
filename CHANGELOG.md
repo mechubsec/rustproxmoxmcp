@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The image runs on `distroless/base-nossl-debian13` instead of `cc-debian13`,
+  dropping libssl3t64 (CVE-2026-124709, unfixed); the binary is rustls-only.
+  libgcc_s.so.1 is copied in from the cc image.
+
 ## [0.12.3] - 2026-11-13
 
 ### Security
