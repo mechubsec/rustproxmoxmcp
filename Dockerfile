@@ -32,7 +32,7 @@ RUN install -d -m 0750 -o 65532 -g 65532 /stage-etc/proxmoxmcp \
 # Digest resolved on 2026-08-24 from gcr.io/distroless/cc-debian13:nonroot.
 # This is newer than the 2026-08-07 digest junos/mist share; they should be
 # updated to this digest to avoid drift.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2
 LABEL org.opencontainers.image.source="https://github.com/mechubsec/rustproxmoxmcp"
 LABEL org.opencontainers.image.licenses="MIT"
 # Official MCP Registry ownership check: must equal server.json "name".
