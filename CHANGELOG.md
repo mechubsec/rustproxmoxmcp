@@ -7,11 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-11-23
+
 ### Security
 
 - The image runs on `distroless/base-nossl-debian13` instead of `cc-debian13`,
   dropping libssl3t64 (CVE-2026-124709, unfixed); the binary is rustls-only.
-  libgcc_s.so.1 is copied in from the cc image.
+  libgcc_s.so.1 is copied in from the cc image (#235).
+- Both distroless bases are repinned to glibc 2.41-12+deb13u5 (#236, #237). The
+  0.12.3 image shipped deb13u4, with 14 CVEs Debian has fixed: CVE-2026-18374,
+  -19499, -19542, -5435, -6238, -6368, -6791, -77117, -80489, -8674, -86805,
+  -89092, -95818 and -97399.
+- url 2.5.9 for RUSTSEC-2026-0592 and cookie 0.18.3 for RUSTSEC-2026-0594
+  (#241). Lockfile only.
+
+### Changed
+
+- axum-server 0.9 (#233), rmcp 3.11 (#240), and the Rust 1.100 builder image
+  (#230).
+- RUSTSEC-2026-0543 (chrono unmaintained) is ignored in cargo-deny (#234).
 
 ## [0.12.3] - 2026-11-13
 
